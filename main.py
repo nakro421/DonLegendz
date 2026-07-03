@@ -363,29 +363,47 @@ class IniView(discord.ui.View):
         await interaction.response.send_modal(AendernModal(self.tag))
 
     async def reset_callback(self, interaction: discord.Interaction):
-        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
-            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
-            return
+    if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+        await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
+        return
 
-        anzahl = gesamt_teilnehmer(self.tag)
+    anzahl = gesamt_teilnehmer(self.tag)
 
-        for zeit in ZEITEN:
-            ini_listen[self.tag][zeit].clear()
-
-        await update_ini_message(self.tag)
-
-        await interaction.response.send_message(
-            f"Die Liste für **{self.tag}** wurde resettet.",
-            ephemeral=True,
-        )
-
-        if interaction.guild:
-            await log_senden(
-                interaction.guild,
-                f"🧹 Reset per Button - Ini {self.tag}",
-                f"**Admin:** {interaction.user.mention}\n**Gelöschte Einträge:** {anzahl}",
-                discord.Color.dark_blue(),
+    alte_liste = ""
+    for zeit in ZEITEN:
+        daten = ini_listen[self.tag][zeit]
+        if daten:
+            namen = "\n".join(
+                f"{i}. {name}"
+                for i, name in enumerate(daten.values(), start=1)
             )
+        else:
+            namen = "Keine Einträge"
+
+        alte_liste += f"🕒 **{zeit}**\n{namen}\n\n"
+
+    for zeit in ZEITEN:
+        ini_listen[self.tag][zeit].clear()
+
+    await update_ini_message(self.tag)
+
+    await interaction.response.send_message(
+        f"Die Liste für **{self.tag}** wurde resettet.",
+        ephemeral=True,
+    )
+
+    if interaction.guild:
+        await log_senden(
+            interaction.guild,
+            f"🧹 Reset per Button - Ini {self.tag}",
+            (
+                f"**Admin:** {interaction.user.mention}\n"
+                f"**Gelöschte Einträge:** {anzahl}\n\n"
+                f"**Zurückgesetzte Liste:**\n\n"
+                f"{alte_liste}"
+            ),
+            discord.Color.dark_blue(),
+        )
 
 
 async def finde_ini_message(channel: discord.TextChannel, tag: str):
