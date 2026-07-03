@@ -1,8 +1,13 @@
 import os
 from datetime import datetime
+
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+# =========================
+# KONFIGURATION
+# =========================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -32,7 +37,9 @@ ZEITEN = [
 
 TAGE = list(INI_CHANNELS.keys())
 
-ini_listen = {
+# Daten werden absichtlich NICHT dauerhaft gespeichert.
+# Nach Bot-Neustart sind Listen leer.
+ini_listen: dict[str, dict[str, dict[int, str]]] = {
     tag: {zeit: {} for zeit in ZEITEN}
     for tag in TAGE
 }
@@ -44,6 +51,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 bot_ready_done = False
 
 
+# =========================
+# HILFSFUNKTIONEN
+# =========================
+
 def ist_admin(member: discord.Member) -> bool:
     return member.guild_permissions.administrator or any(
         role.name == ADMIN_ROLE_NAME for role in member.roles
@@ -54,7 +65,7 @@ def hat_ini_rolle(member: discord.Member) -> bool:
     return ist_admin(member) or any(role.name == INI_ROLE_NAME for role in member.roles)
 
 
-def finde_eintrag(tag: str, user_id: int):
+def finde_eintrag(tag: str, user_id: int) -> tuple[str | None, str | None]:
     for zeit in ZEITEN:
         if user_id in ini_listen[tag][zeit]:
             return zeit, ini_listen[tag][zeit][user_id]
@@ -75,8 +86,27 @@ def gesamt_teilnehmer(tag: str) -> int:
     return sum(len(ini_listen[tag][zeit]) for zeit in ZEITEN)
 
 
+def alte_liste_als_text(tag: str) -> str:
+    teile = []
+
+    for zeit in ZEITEN:
+        daten = ini_listen[tag][zeit]
+
+        if daten:
+            namen = "\n".join(
+                f"{i}. {name}"
+                for i, name in enumerate(daten.values(), start=1)
+            )
+        else:
+            namen = "Keine Einträge"
+
+        teile.append(f"🕒 **{zeit}**\n{namen}")
+
+    return "\n\n".join(teile)
+
+
 def ini_embed(tag: str) -> discord.Embed:
-    beschreibung = ""
+    beschreibung = []
 
     for zeit in ZEITEN:
         daten = ini_listen[tag][zeit]
@@ -89,18 +119,18 @@ def ini_embed(tag: str) -> discord.Embed:
         else:
             teilnehmer = "*Noch niemand angemeldet.*"
 
-        beschreibung += f"🕒 **{zeit}**\n{teilnehmer}\n\n"
+        beschreibung.append(f"🕒 **{zeit}**\n{teilnehmer}")
 
     embed = discord.Embed(
         title=f"📅 Ini {tag}",
-        description=beschreibung,
+        description="\n\n".join(beschreibung),
         color=discord.Color.blue(),
     )
     embed.set_footer(text=f"Teilnehmer gesamt: {gesamt_teilnehmer(tag)}")
     return embed
 
 
-async def log_senden(guild: discord.Guild, titel: str, text: str, farbe: discord.Color):
+async def log_senden(guild: discord.Guild, titel: str, text: str, farbe: discord.Color) -> None:
     channel = guild.get_channel(LOG_CHANNEL_ID)
 
     if channel is None:
@@ -108,6 +138,13 @@ async def log_senden(guild: discord.Guild, titel: str, text: str, farbe: discord
             channel = await guild.fetch_channel(LOG_CHANNEL_ID)
         except Exception:
             return
+
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    # Discord Embed-Beschreibungen dürfen max. 4096 Zeichen haben.
+    if len(text) > 3900:
+        text = text[:3900] + "\n\n... gekürzt, weil der Log zu lang war."
 
     embed = discord.Embed(
         title=titel,
@@ -118,7 +155,7 @@ async def log_senden(guild: discord.Guild, titel: str, text: str, farbe: discord
     await channel.send(embed=embed)
 
 
-async def get_ini_channel(tag: str):
+async def get_ini_channel(tag: str) -> discord.TextChannel | None:
     channel = bot.get_channel(INI_CHANNELS[tag])
 
     if channel is None:
@@ -127,8 +164,38 @@ async def get_ini_channel(tag: str):
         except Exception:
             return None
 
-    return channel
+    if isinstance(channel, discord.TextChannel):
+        return channel
 
+    return None
+
+
+async def finde_ini_message(channel: discord.TextChannel, tag: str) -> discord.Message | None:
+    async for msg in channel.history(limit=100):
+        if msg.author == bot.user and msg.embeds:
+            if msg.embeds[0].title == f"📅 Ini {tag}":
+                return msg
+    return None
+
+
+async def update_ini_message(tag: str) -> None:
+    channel = await get_ini_channel(tag)
+
+    if channel is None:
+        print(f"Channel für {tag} nicht gefunden.")
+        return
+
+    msg = await finde_ini_message(channel, tag)
+
+    if msg:
+        await msg.edit(embed=ini_embed(tag), view=IniView(tag))
+    else:
+        await channel.send(embed=ini_embed(tag), view=IniView(tag))
+
+
+# =========================
+# MODALS
+# =========================
 
 class AnmeldungModal(discord.ui.Modal):
     def __init__(self, tag: str, zeit: str):
@@ -145,7 +212,7 @@ class AnmeldungModal(discord.ui.Modal):
         )
         self.add_item(self.name)
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
             return
@@ -204,7 +271,7 @@ class AendernModal(discord.ui.Modal):
         )
         self.add_item(self.name)
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
             return
@@ -213,7 +280,7 @@ class AendernModal(discord.ui.Modal):
         neuer_name = str(self.name.value).strip()
         zeit, alter_name = finde_eintrag(self.tag, member.id)
 
-        if zeit is None:
+        if zeit is None or alter_name is None:
             await interaction.response.send_message(
                 f"Du bist für **{self.tag}** nicht angemeldet.",
                 ephemeral=True,
@@ -244,6 +311,10 @@ class AendernModal(discord.ui.Modal):
             )
 
 
+# =========================
+# VIEWS / BUTTONS
+# =========================
+
 class ZeitAuswahl(discord.ui.Select):
     def __init__(self, tag: str):
         self.tag = tag
@@ -261,7 +332,7 @@ class ZeitAuswahl(discord.ui.Select):
             custom_id=f"zeit_select_{tag}",
         )
 
-    async def callback(self, interaction: discord.Interaction):
+    async def callback(self, interaction: discord.Interaction) -> None:
         zeit = self.values[0]
         await interaction.response.send_modal(AnmeldungModal(self.tag, zeit))
 
@@ -313,7 +384,7 @@ class IniView(discord.ui.View):
         reset.callback = self.reset_callback
         self.add_item(reset)
 
-    async def anmelden_callback(self, interaction: discord.Interaction):
+    async def anmelden_callback(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
             return
@@ -328,7 +399,7 @@ class IniView(discord.ui.View):
             ephemeral=True,
         )
 
-    async def abmelden_callback(self, interaction: discord.Interaction):
+    async def abmelden_callback(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
             return
@@ -336,7 +407,7 @@ class IniView(discord.ui.View):
         member = interaction.user
         zeit, alter_name = finde_eintrag(self.tag, member.id)
 
-        if zeit is None:
+        if zeit is None or alter_name is None:
             await interaction.response.send_message(
                 f"Du bist für **{self.tag}** nicht angemeldet.",
                 ephemeral=True,
@@ -359,75 +430,44 @@ class IniView(discord.ui.View):
                 discord.Color.red(),
             )
 
-    async def aendern_callback(self, interaction: discord.Interaction):
+    async def aendern_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(AendernModal(self.tag))
 
-    async def reset_callback(self, interaction: discord.Interaction):
-    if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
-        await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
-        return
+    async def reset_callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
+            return
 
-    anzahl = gesamt_teilnehmer(self.tag)
+        anzahl = gesamt_teilnehmer(self.tag)
+        reset_liste = alte_liste_als_text(self.tag)
 
-    alte_liste = ""
-    for zeit in ZEITEN:
-        daten = ini_listen[self.tag][zeit]
-        if daten:
-            namen = "\n".join(
-                f"{i}. {name}"
-                for i, name in enumerate(daten.values(), start=1)
-            )
-        else:
-            namen = "Keine Einträge"
+        for zeit in ZEITEN:
+            ini_listen[self.tag][zeit].clear()
 
-        alte_liste += f"🕒 **{zeit}**\n{namen}\n\n"
+        await update_ini_message(self.tag)
 
-    for zeit in ZEITEN:
-        ini_listen[self.tag][zeit].clear()
-
-    await update_ini_message(self.tag)
-
-    await interaction.response.send_message(
-        f"Die Liste für **{self.tag}** wurde resettet.",
-        ephemeral=True,
-    )
-
-    if interaction.guild:
-        await log_senden(
-            interaction.guild,
-            f"🧹 Reset per Button - Ini {self.tag}",
-            (
-                f"**Admin:** {interaction.user.mention}\n"
-                f"**Gelöschte Einträge:** {anzahl}\n\n"
-                f"**Zurückgesetzte Liste:**\n\n"
-                f"{alte_liste}"
-            ),
-            discord.Color.dark_blue(),
+        await interaction.response.send_message(
+            f"Die Liste für **{self.tag}** wurde resettet.",
+            ephemeral=True,
         )
 
+        if interaction.guild:
+            await log_senden(
+                interaction.guild,
+                f"🧹 Reset per Button - Ini {self.tag}",
+                (
+                    f"**Admin:** {interaction.user.mention}\n"
+                    f"**Gelöschte Einträge:** {anzahl}\n\n"
+                    f"**Zurückgesetzte Liste:**\n\n"
+                    f"{reset_liste}"
+                ),
+                discord.Color.dark_blue(),
+            )
 
-async def finde_ini_message(channel: discord.TextChannel, tag: str):
-    async for msg in channel.history(limit=50):
-        if msg.author == bot.user and msg.embeds:
-            if msg.embeds[0].title == f"📅 Ini {tag}":
-                return msg
-    return None
 
-
-async def update_ini_message(tag: str):
-    channel = await get_ini_channel(tag)
-
-    if channel is None:
-        print(f"Channel für {tag} nicht gefunden.")
-        return
-
-    msg = await finde_ini_message(channel, tag)
-
-    if msg:
-        await msg.edit(embed=ini_embed(tag), view=IniView(tag))
-    else:
-        await channel.send(embed=ini_embed(tag), view=IniView(tag))
-
+# =========================
+# SLASH COMMANDS
+# =========================
 
 class IniCommands(app_commands.Group):
     def __init__(self):
@@ -439,7 +479,7 @@ class IniCommands(app_commands.Group):
         self,
         interaction: discord.Interaction,
         tag: app_commands.Choice[str],
-    ):
+    ) -> None:
         await interaction.response.send_message(embed=ini_embed(tag.value), ephemeral=True)
 
     @app_commands.command(name="entfernen", description="Admin: Entfernt ein Mitglied")
@@ -449,7 +489,7 @@ class IniCommands(app_commands.Group):
         interaction: discord.Interaction,
         tag: app_commands.Choice[str],
         mitglied: discord.Member,
-    ):
+    ) -> None:
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
             return
@@ -457,7 +497,7 @@ class IniCommands(app_commands.Group):
         tag_name = tag.value
         zeit, alter_name = finde_eintrag(tag_name, mitglied.id)
 
-        if zeit is None:
+        if zeit is None or alter_name is None:
             await interaction.response.send_message(
                 "Dieses Mitglied ist dort nicht angemeldet.",
                 ephemeral=True,
@@ -486,13 +526,14 @@ class IniCommands(app_commands.Group):
         self,
         interaction: discord.Interaction,
         tag: app_commands.Choice[str],
-    ):
+    ) -> None:
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
             return
 
         tag_name = tag.value
         anzahl = gesamt_teilnehmer(tag_name)
+        reset_liste = alte_liste_als_text(tag_name)
 
         for zeit in ZEITEN:
             ini_listen[tag_name][zeit].clear()
@@ -508,7 +549,12 @@ class IniCommands(app_commands.Group):
             await log_senden(
                 interaction.guild,
                 f"🧹 Liste geleert - Ini {tag_name}",
-                f"**Admin:** {interaction.user.mention}\n**Gelöschte Einträge:** {anzahl}",
+                (
+                    f"**Admin:** {interaction.user.mention}\n"
+                    f"**Gelöschte Einträge:** {anzahl}\n\n"
+                    f"**Zurückgesetzte Liste:**\n\n"
+                    f"{reset_liste}"
+                ),
                 discord.Color.dark_blue(),
             )
 
@@ -518,7 +564,7 @@ class IniCommands(app_commands.Group):
         self,
         interaction: discord.Interaction,
         tag: app_commands.Choice[str],
-    ):
+    ) -> None:
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
             return
@@ -531,8 +577,12 @@ class IniCommands(app_commands.Group):
         )
 
 
+# =========================
+# BOT START
+# =========================
+
 @bot.event
-async def on_ready():
+async def on_ready() -> None:
     global bot_ready_done
 
     print(f"Eingeloggt als {bot.user}")
