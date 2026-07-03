@@ -1,23 +1,15 @@
-# Fiesta Ini Bot Multi
+# Fiesta Ini Bot
 
-## Wichtig
-Dieser Bot erlaubt jetzt mehrere Anmeldungen pro Person.
+## Änderung
+Gleiche Fiesta-Namen dürfen jetzt in unterschiedlichen Uhrzeiten stehen.
 
-## So anmelden
-Button `Anmelden`:
-- Uhrzeit wählen
-- Fiesta-Namen eintragen
-- Man kann beliebig viele Fiesta-Namen eintragen
+Beispiel:
+- Hexi - Angus bei 14:00 - 16:00
+- Hexi - Angus bei 16:00 - 18:00
+- Hexi - Angus bei 18:00 - 20:00
 
-Slash Command:
-`/ini anmelden_fuer tag zeit fiesta_name mitglied`
+Blockiert wird nur ein doppelter Name im gleichen Zeitfenster.
 
-`mitglied` ist optional.
-
-## Abmelden
-Button `Abmelden` zeigt eine Auswahl aller Fiesta-Namen.
-Jeder mit Rolle `Freund der Ini` kann Einträge abmelden.
-
-## Railway Variable
-Name: `DISCORD_TOKEN`
-Value: dein Bot-Token
+## Railway
+Variable:
+DISCORD_TOKEN = dein Bot-Token

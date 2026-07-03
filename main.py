@@ -37,11 +37,9 @@ ZEITEN = [
 
 TAGE = list(INI_CHANNELS.keys())
 
-# Jetzt sind MEHRFACH-Anmeldungen möglich.
-# Aufbau:
-# ini_listen[tag][zeit] = [
-#   {"fiesta": "CharName", "eingetragen_von": 123456789, "discord_user": 987654321 oder None}
-# ]
+# Mehrfach-Anmeldungen sind möglich.
+# Gleicher Fiesta-Name darf in unterschiedlichen Uhrzeiten stehen.
+# Gleicher Fiesta-Name wird nur im selben Zeitfenster blockiert.
 ini_listen: dict[str, dict[str, list[dict]]] = {
     tag: {zeit: [] for zeit in ZEITEN}
     for tag in TAGE
@@ -68,11 +66,12 @@ def hat_ini_rolle(member: discord.Member) -> bool:
     return ist_admin(member) or any(role.name == INI_ROLE_NAME for role in member.roles)
 
 
-def fiesta_name_existiert(tag: str, fiesta_name: str) -> bool:
-    for zeit in ZEITEN:
-        for eintrag in ini_listen[tag][zeit]:
-            if eintrag["fiesta"].lower() == fiesta_name.lower():
-                return True
+def fiesta_name_existiert_in_zeit(tag: str, zeit: str, fiesta_name: str, ignore_index: int | None = None) -> bool:
+    for index, eintrag in enumerate(ini_listen[tag][zeit]):
+        if ignore_index is not None and index == ignore_index:
+            continue
+        if eintrag["fiesta"].lower() == fiesta_name.lower():
+            return True
     return False
 
 
@@ -225,9 +224,9 @@ class AnmeldungModal(discord.ui.Modal):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
             return
 
-        if fiesta_name_existiert(self.tag, fiesta_name):
+        if fiesta_name_existiert_in_zeit(self.tag, self.zeit, fiesta_name):
             await interaction.response.send_message(
-                "Dieser Fiesta-Name steht an diesem Tag bereits in der Liste.",
+                "Dieser Fiesta-Name steht in diesem Zeitfenster bereits in der Liste.",
                 ephemeral=True,
             )
             return
@@ -299,9 +298,9 @@ class AendernModal(discord.ui.Modal):
             )
             return
 
-        if fiesta_name_existiert(self.tag, neuer_name):
+        if fiesta_name_existiert_in_zeit(self.tag, zeit, neuer_name, ignore_index=index):
             await interaction.response.send_message(
-                "Dieser neue Fiesta-Name steht an diesem Tag bereits in der Liste.",
+                "Dieser neue Fiesta-Name steht in diesem Zeitfenster bereits in der Liste.",
                 ephemeral=True,
             )
             return
@@ -361,11 +360,11 @@ class AbmeldenAuswahl(discord.ui.Select):
 
         options = []
         for zeit in ZEITEN:
-            for eintrag in ini_listen[tag][zeit]:
+            for index, eintrag in enumerate(ini_listen[tag][zeit]):
                 options.append(
                     discord.SelectOption(
                         label=eintrag["fiesta"][:100],
-                        value=eintrag["fiesta"],
+                        value=f"{zeit}|||{index}",
                         description=zeit[:100],
                         emoji="❌",
                     )
@@ -403,13 +402,15 @@ class AbmeldenAuswahl(discord.ui.Select):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
             return
 
-        fiesta_name = self.values[0]
-        zeit, index, eintrag = finde_eintrag_nach_fiesta(self.tag, fiesta_name)
-
-        if zeit is None or index is None or eintrag is None:
+        try:
+            zeit, index_text = self.values[0].split("|||")
+            index = int(index_text)
+            eintrag = ini_listen[self.tag][zeit][index]
+        except Exception:
             await interaction.response.send_message("Dieser Eintrag wurde nicht gefunden.", ephemeral=True)
             return
 
+        fiesta_name = eintrag["fiesta"]
         del ini_listen[self.tag][zeit][index]
         await update_ini_message(self.tag)
 
@@ -484,7 +485,7 @@ class IniView(discord.ui.View):
             return
 
         await interaction.response.send_message(
-            f"Wähle eine Uhrzeit für **{self.tag}** aus. Du kannst auch andere Leute eintragen:",
+            f"Wähle eine Uhrzeit für **{self.tag}** aus. Gleiche Namen dürfen in mehreren Uhrzeiten stehen:",
             view=ZeitAuswahlView(self.tag),
             ephemeral=True,
         )
@@ -585,9 +586,9 @@ class IniCommands(app_commands.Group):
             await interaction.response.send_message("Der Fiesta-Name ist zu kurz.", ephemeral=True)
             return
 
-        if fiesta_name_existiert(tag_name, fiesta_name):
+        if fiesta_name_existiert_in_zeit(tag_name, zeit_name, fiesta_name):
             await interaction.response.send_message(
-                "Dieser Fiesta-Name steht an diesem Tag bereits in der Liste.",
+                "Dieser Fiesta-Name steht in diesem Zeitfenster bereits in der Liste.",
                 ephemeral=True,
             )
             return
@@ -621,11 +622,15 @@ class IniCommands(app_commands.Group):
             )
 
     @app_commands.command(name="entfernen", description="Admin: Entfernt einen Fiesta-Namen")
-    @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
+    @app_commands.choices(
+        tag=[app_commands.Choice(name=t, value=t) for t in TAGE],
+        zeit=[app_commands.Choice(name=z, value=z) for z in ZEITEN],
+    )
     async def entfernen(
         self,
         interaction: discord.Interaction,
         tag: app_commands.Choice[str],
+        zeit: app_commands.Choice[str],
         fiesta_name: str,
     ) -> None:
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
@@ -633,20 +638,26 @@ class IniCommands(app_commands.Group):
             return
 
         tag_name = tag.value
-        zeit, index, eintrag = finde_eintrag_nach_fiesta(tag_name, fiesta_name)
+        zeit_name = zeit.value
 
-        if zeit is None or index is None or eintrag is None:
+        index_gefunden = None
+        for index, eintrag in enumerate(ini_listen[tag_name][zeit_name]):
+            if eintrag["fiesta"].lower() == fiesta_name.lower():
+                index_gefunden = index
+                break
+
+        if index_gefunden is None:
             await interaction.response.send_message(
-                "Dieser Fiesta-Name ist dort nicht angemeldet.",
+                "Dieser Fiesta-Name ist in diesem Zeitfenster nicht angemeldet.",
                 ephemeral=True,
             )
             return
 
-        del ini_listen[tag_name][zeit][index]
+        del ini_listen[tag_name][zeit_name][index_gefunden]
         await update_ini_message(tag_name)
 
         await interaction.response.send_message(
-            f"**{fiesta_name}** wurde aus **{tag_name}** entfernt.",
+            f"**{fiesta_name}** wurde aus **{tag_name}** um **{zeit_name}** entfernt.",
             ephemeral=True,
         )
 
@@ -654,7 +665,7 @@ class IniCommands(app_commands.Group):
             await log_senden(
                 interaction.guild,
                 f"🛡️ Admin-Entfernung - Ini {tag_name}",
-                f"**Admin:** {interaction.user.mention}\n**Fiesta:** {fiesta_name}\n**Uhrzeit:** {zeit}",
+                f"**Admin:** {interaction.user.mention}\n**Fiesta:** {fiesta_name}\n**Uhrzeit:** {zeit_name}",
                 discord.Color.dark_blue(),
             )
 
