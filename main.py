@@ -37,10 +37,13 @@ ZEITEN = [
 
 TAGE = list(INI_CHANNELS.keys())
 
-# Daten werden absichtlich NICHT dauerhaft gespeichert.
-# Nach Bot-Neustart sind Listen leer.
-ini_listen: dict[str, dict[str, dict[int, str]]] = {
-    tag: {zeit: {} for zeit in ZEITEN}
+# Jetzt sind MEHRFACH-Anmeldungen möglich.
+# Aufbau:
+# ini_listen[tag][zeit] = [
+#   {"fiesta": "CharName", "eingetragen_von": 123456789, "discord_user": 987654321 oder None}
+# ]
+ini_listen: dict[str, dict[str, list[dict]]] = {
+    tag: {zeit: [] for zeit in ZEITEN}
     for tag in TAGE
 }
 
@@ -65,25 +68,24 @@ def hat_ini_rolle(member: discord.Member) -> bool:
     return ist_admin(member) or any(role.name == INI_ROLE_NAME for role in member.roles)
 
 
-def finde_eintrag(tag: str, user_id: int) -> tuple[str | None, str | None]:
+def fiesta_name_existiert(tag: str, fiesta_name: str) -> bool:
     for zeit in ZEITEN:
-        if user_id in ini_listen[tag][zeit]:
-            return zeit, ini_listen[tag][zeit][user_id]
-    return None, None
-
-
-def fiesta_name_existiert(tag: str, fiesta_name: str, ignore_user_id: int | None = None) -> bool:
-    for zeit in ZEITEN:
-        for user_id, name in ini_listen[tag][zeit].items():
-            if ignore_user_id is not None and user_id == ignore_user_id:
-                continue
-            if name.lower() == fiesta_name.lower():
+        for eintrag in ini_listen[tag][zeit]:
+            if eintrag["fiesta"].lower() == fiesta_name.lower():
                 return True
     return False
 
 
 def gesamt_teilnehmer(tag: str) -> int:
     return sum(len(ini_listen[tag][zeit]) for zeit in ZEITEN)
+
+
+def finde_eintrag_nach_fiesta(tag: str, fiesta_name: str):
+    for zeit in ZEITEN:
+        for index, eintrag in enumerate(ini_listen[tag][zeit]):
+            if eintrag["fiesta"].lower() == fiesta_name.lower():
+                return zeit, index, eintrag
+    return None, None, None
 
 
 def alte_liste_als_text(tag: str) -> str:
@@ -94,8 +96,8 @@ def alte_liste_als_text(tag: str) -> str:
 
         if daten:
             namen = "\n".join(
-                f"{i}. {name}"
-                for i, name in enumerate(daten.values(), start=1)
+                f"{i}. {eintrag['fiesta']}"
+                for i, eintrag in enumerate(daten, start=1)
             )
         else:
             namen = "Keine Einträge"
@@ -113,8 +115,8 @@ def ini_embed(tag: str) -> discord.Embed:
 
         if daten:
             teilnehmer = "\n".join(
-                f"**{i}.** {name}"
-                for i, name in enumerate(daten.values(), start=1)
+                f"**{i}.** {eintrag['fiesta']}"
+                for i, eintrag in enumerate(daten, start=1)
             )
         else:
             teilnehmer = "*Noch niemand angemeldet.*"
@@ -204,7 +206,7 @@ class AnmeldungModal(discord.ui.Modal):
 
         self.name = discord.ui.TextInput(
             label="Fiesta-Charaktername",
-            placeholder="Dein Fiesta-Name",
+            placeholder="Dein Fiesta-Name oder Name von jemand anderem",
             min_length=2,
             max_length=30,
             required=True,
@@ -223,15 +225,6 @@ class AnmeldungModal(discord.ui.Modal):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
             return
 
-        alte_zeit, _ = finde_eintrag(self.tag, member.id)
-
-        if alte_zeit is not None:
-            await interaction.response.send_message(
-                f"Du bist für **{self.tag}** bereits bei **{alte_zeit}** angemeldet.",
-                ephemeral=True,
-            )
-            return
-
         if fiesta_name_existiert(self.tag, fiesta_name):
             await interaction.response.send_message(
                 "Dieser Fiesta-Name steht an diesem Tag bereits in der Liste.",
@@ -239,11 +232,16 @@ class AnmeldungModal(discord.ui.Modal):
             )
             return
 
-        ini_listen[self.tag][self.zeit][member.id] = fiesta_name
+        ini_listen[self.tag][self.zeit].append({
+            "fiesta": fiesta_name,
+            "eingetragen_von": member.id,
+            "discord_user": member.id,
+        })
+
         await update_ini_message(self.tag)
 
         await interaction.response.send_message(
-            f"Du wurdest für **{self.tag}** um **{self.zeit}** mit **{fiesta_name}** angemeldet.",
+            f"**{fiesta_name}** wurde für **{self.tag}** um **{self.zeit}** angemeldet.",
             ephemeral=True,
         )
 
@@ -251,7 +249,7 @@ class AnmeldungModal(discord.ui.Modal):
             await log_senden(
                 interaction.guild,
                 f"✅ Anmeldung - Ini {self.tag}",
-                f"**Discord:** {member.mention}\n**Fiesta:** {fiesta_name}\n**Uhrzeit:** {self.zeit}",
+                f"**Eingetragen von:** {member.mention}\n**Fiesta:** {fiesta_name}\n**Uhrzeit:** {self.zeit}",
                 discord.Color.green(),
             )
 
@@ -261,14 +259,22 @@ class AendernModal(discord.ui.Modal):
         super().__init__(title=f"Namen ändern - Ini {tag}")
         self.tag = tag
 
-        self.name = discord.ui.TextInput(
-            label="Neuer Fiesta-Charaktername",
+        self.alt = discord.ui.TextInput(
+            label="Alter Fiesta-Name",
+            placeholder="Name, der aktuell in der Liste steht",
+            min_length=2,
+            max_length=30,
+            required=True,
+        )
+        self.neu = discord.ui.TextInput(
+            label="Neuer Fiesta-Name",
             placeholder="Neuer Fiesta-Name",
             min_length=2,
             max_length=30,
             required=True,
         )
-        self.add_item(self.name)
+        self.add_item(self.alt)
+        self.add_item(self.neu)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member):
@@ -276,24 +282,31 @@ class AendernModal(discord.ui.Modal):
             return
 
         member = interaction.user
-        neuer_name = str(self.name.value).strip()
-        zeit, alter_name = finde_eintrag(self.tag, member.id)
 
-        if zeit is None or alter_name is None:
+        if not hat_ini_rolle(member):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
+            return
+
+        alter_name = str(self.alt.value).strip()
+        neuer_name = str(self.neu.value).strip()
+
+        zeit, index, eintrag = finde_eintrag_nach_fiesta(self.tag, alter_name)
+
+        if zeit is None or index is None or eintrag is None:
             await interaction.response.send_message(
-                f"Du bist für **{self.tag}** nicht angemeldet.",
+                f"**{alter_name}** wurde für **{self.tag}** nicht gefunden.",
                 ephemeral=True,
             )
             return
 
-        if fiesta_name_existiert(self.tag, neuer_name, ignore_user_id=member.id):
+        if fiesta_name_existiert(self.tag, neuer_name):
             await interaction.response.send_message(
-                "Dieser Fiesta-Name steht an diesem Tag bereits in der Liste.",
+                "Dieser neue Fiesta-Name steht an diesem Tag bereits in der Liste.",
                 ephemeral=True,
             )
             return
 
-        ini_listen[self.tag][zeit][member.id] = neuer_name
+        ini_listen[self.tag][zeit][index]["fiesta"] = neuer_name
         await update_ini_message(self.tag)
 
         await interaction.response.send_message(
@@ -305,7 +318,7 @@ class AendernModal(discord.ui.Modal):
             await log_senden(
                 interaction.guild,
                 f"✏️ Änderung - Ini {self.tag}",
-                f"**Discord:** {member.mention}\n**Uhrzeit:** {zeit}\n**Alt:** {alter_name}\n**Neu:** {neuer_name}",
+                f"**Geändert von:** {member.mention}\n**Uhrzeit:** {zeit}\n**Alt:** {alter_name}\n**Neu:** {neuer_name}",
                 discord.Color.orange(),
             )
 
@@ -340,6 +353,84 @@ class ZeitAuswahlView(discord.ui.View):
     def __init__(self, tag: str):
         super().__init__(timeout=120)
         self.add_item(ZeitAuswahl(tag))
+
+
+class AbmeldenAuswahl(discord.ui.Select):
+    def __init__(self, tag: str):
+        self.tag = tag
+
+        options = []
+        for zeit in ZEITEN:
+            for eintrag in ini_listen[tag][zeit]:
+                options.append(
+                    discord.SelectOption(
+                        label=eintrag["fiesta"][:100],
+                        value=eintrag["fiesta"],
+                        description=zeit[:100],
+                        emoji="❌",
+                    )
+                )
+
+        if not options:
+            options = [
+                discord.SelectOption(
+                    label="Keine Einträge vorhanden",
+                    value="NONE",
+                    description="Es ist niemand angemeldet.",
+                )
+            ]
+
+        super().__init__(
+            placeholder="Wähle aus, wen du abmelden möchtest",
+            min_values=1,
+            max_values=1,
+            options=options[:25],
+            custom_id=f"abmelden_select_{tag}",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
+            return
+
+        if self.values[0] == "NONE":
+            await interaction.response.send_message("Es gibt keine Einträge zum Abmelden.", ephemeral=True)
+            return
+
+        member = interaction.user
+
+        if not hat_ini_rolle(member):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
+            return
+
+        fiesta_name = self.values[0]
+        zeit, index, eintrag = finde_eintrag_nach_fiesta(self.tag, fiesta_name)
+
+        if zeit is None or index is None or eintrag is None:
+            await interaction.response.send_message("Dieser Eintrag wurde nicht gefunden.", ephemeral=True)
+            return
+
+        del ini_listen[self.tag][zeit][index]
+        await update_ini_message(self.tag)
+
+        await interaction.response.send_message(
+            f"**{fiesta_name}** wurde von **{self.tag}** um **{zeit}** abgemeldet.",
+            ephemeral=True,
+        )
+
+        if interaction.guild:
+            await log_senden(
+                interaction.guild,
+                f"❌ Abmeldung - Ini {self.tag}",
+                f"**Abgemeldet von:** {member.mention}\n**Fiesta:** {fiesta_name}\n**Uhrzeit:** {zeit}",
+                discord.Color.red(),
+            )
+
+
+class AbmeldenAuswahlView(discord.ui.View):
+    def __init__(self, tag: str):
+        super().__init__(timeout=120)
+        self.add_item(AbmeldenAuswahl(tag))
 
 
 class IniView(discord.ui.View):
@@ -393,7 +484,7 @@ class IniView(discord.ui.View):
             return
 
         await interaction.response.send_message(
-            f"Wähle eine Uhrzeit für **{self.tag}** aus:",
+            f"Wähle eine Uhrzeit für **{self.tag}** aus. Du kannst auch andere Leute eintragen:",
             view=ZeitAuswahlView(self.tag),
             ephemeral=True,
         )
@@ -403,31 +494,15 @@ class IniView(discord.ui.View):
             await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
             return
 
-        member = interaction.user
-        zeit, alter_name = finde_eintrag(self.tag, member.id)
-
-        if zeit is None or alter_name is None:
-            await interaction.response.send_message(
-                f"Du bist für **{self.tag}** nicht angemeldet.",
-                ephemeral=True,
-            )
+        if not hat_ini_rolle(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
             return
 
-        del ini_listen[self.tag][zeit][member.id]
-        await update_ini_message(self.tag)
-
         await interaction.response.send_message(
-            f"Du wurdest von **{self.tag}** um **{zeit}** abgemeldet.",
+            f"Wähle aus, wer von **{self.tag}** abgemeldet werden soll:",
+            view=AbmeldenAuswahlView(self.tag),
             ephemeral=True,
         )
-
-        if interaction.guild:
-            await log_senden(
-                interaction.guild,
-                f"❌ Abmeldung - Ini {self.tag}",
-                f"**Discord:** {member.mention}\n**Fiesta:** {alter_name}\n**Uhrzeit:** {zeit}",
-                discord.Color.red(),
-            )
 
     async def aendern_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(AendernModal(self.tag))
@@ -481,7 +556,7 @@ class IniCommands(app_commands.Group):
     ) -> None:
         await interaction.response.send_message(embed=ini_embed(tag.value), ephemeral=True)
 
-    @app_commands.command(name="anmelden_fuer", description="Meldet ein Mitglied für eine Ini an")
+    @app_commands.command(name="anmelden_fuer", description="Meldet jemanden für eine Ini an")
     @app_commands.choices(
         tag=[app_commands.Choice(name=t, value=t) for t in TAGE],
         zeit=[app_commands.Choice(name=z, value=z) for z in ZEITEN],
@@ -491,8 +566,8 @@ class IniCommands(app_commands.Group):
         interaction: discord.Interaction,
         tag: app_commands.Choice[str],
         zeit: app_commands.Choice[str],
-        mitglied: discord.Member,
         fiesta_name: str,
+        mitglied: discord.Member | None = None,
     ) -> None:
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
@@ -510,15 +585,6 @@ class IniCommands(app_commands.Group):
             await interaction.response.send_message("Der Fiesta-Name ist zu kurz.", ephemeral=True)
             return
 
-        alte_zeit, _ = finde_eintrag(tag_name, mitglied.id)
-
-        if alte_zeit is not None:
-            await interaction.response.send_message(
-                f"{mitglied.mention} ist für **{tag_name}** bereits bei **{alte_zeit}** angemeldet.",
-                ephemeral=True,
-            )
-            return
-
         if fiesta_name_existiert(tag_name, fiesta_name):
             await interaction.response.send_message(
                 "Dieser Fiesta-Name steht an diesem Tag bereits in der Liste.",
@@ -526,54 +592,61 @@ class IniCommands(app_commands.Group):
             )
             return
 
-        ini_listen[tag_name][zeit_name][mitglied.id] = fiesta_name
+        ini_listen[tag_name][zeit_name].append({
+            "fiesta": fiesta_name,
+            "eingetragen_von": interaction.user.id,
+            "discord_user": mitglied.id if mitglied else None,
+        })
+
         await update_ini_message(tag_name)
 
+        ziel_text = mitglied.mention if mitglied else "Ohne Discord-Mitglied"
+
         await interaction.response.send_message(
-            f"{mitglied.mention} wurde für **{tag_name}** um **{zeit_name}** mit **{fiesta_name}** angemeldet.",
+            f"**{fiesta_name}** wurde für **{tag_name}** um **{zeit_name}** angemeldet.",
             ephemeral=True,
         )
 
         if interaction.guild:
             await log_senden(
                 interaction.guild,
-                f"✅ Anmeldung für anderes Mitglied - Ini {tag_name}",
+                f"✅ Anmeldung für andere Person - Ini {tag_name}",
                 (
                     f"**Eingetragen von:** {interaction.user.mention}\n"
-                    f"**Angemeldet:** {mitglied.mention}\n"
+                    f"**Discord-Mitglied:** {ziel_text}\n"
                     f"**Fiesta:** {fiesta_name}\n"
                     f"**Uhrzeit:** {zeit_name}"
                 ),
                 discord.Color.green(),
             )
 
-    @app_commands.command(name="entfernen", description="Admin: Entfernt ein Mitglied")
+    @app_commands.command(name="entfernen", description="Admin: Entfernt einen Fiesta-Namen")
     @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
     async def entfernen(
         self,
         interaction: discord.Interaction,
         tag: app_commands.Choice[str],
-        mitglied: discord.Member,
+        fiesta_name: str,
     ) -> None:
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
             return
 
         tag_name = tag.value
-        zeit, alter_name = finde_eintrag(tag_name, mitglied.id)
+        zeit, index, eintrag = finde_eintrag_nach_fiesta(tag_name, fiesta_name)
 
-        if zeit is None or alter_name is None:
+        if zeit is None or index is None or eintrag is None:
             await interaction.response.send_message(
-                "Dieses Mitglied ist dort nicht angemeldet.",
+                "Dieser Fiesta-Name ist dort nicht angemeldet.",
                 ephemeral=True,
             )
             return
 
-        del ini_listen[tag_name][zeit][mitglied.id]
+        del ini_listen[tag_name][zeit][index]
         await update_ini_message(tag_name)
 
         await interaction.response.send_message(
-            f"{mitglied.mention} wurde aus **{tag_name}** entfernt.",
+            f"**{fiesta_name}** wurde aus **{tag_name}** entfernt.",
             ephemeral=True,
         )
 
@@ -581,7 +654,7 @@ class IniCommands(app_commands.Group):
             await log_senden(
                 interaction.guild,
                 f"🛡️ Admin-Entfernung - Ini {tag_name}",
-                f"**Admin:** {interaction.user.mention}\n**Entfernt:** {mitglied.mention}\n**Fiesta:** {alter_name}\n**Uhrzeit:** {zeit}",
+                f"**Admin:** {interaction.user.mention}\n**Fiesta:** {fiesta_name}\n**Uhrzeit:** {zeit}",
                 discord.Color.dark_blue(),
             )
 

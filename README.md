@@ -1,18 +1,23 @@
-# Fiesta Ini Bot
+# Fiesta Ini Bot Multi
 
-## Neu dabei
-- `/ini anmelden_fuer` kann von jedem mit Rolle `Freund der Ini` benutzt werden.
-- Damit kann man andere Mitglieder anmelden.
+## Wichtig
+Dieser Bot erlaubt jetzt mehrere Anmeldungen pro Person.
+
+## So anmelden
+Button `Anmelden`:
+- Uhrzeit wählen
+- Fiesta-Namen eintragen
+- Man kann beliebig viele Fiesta-Namen eintragen
+
+Slash Command:
+`/ini anmelden_fuer tag zeit fiesta_name mitglied`
+
+`mitglied` ist optional.
+
+## Abmelden
+Button `Abmelden` zeigt eine Auswahl aller Fiesta-Namen.
+Jeder mit Rolle `Freund der Ini` kann Einträge abmelden.
 
 ## Railway Variable
 Name: `DISCORD_TOKEN`
 Value: dein Bot-Token
-
-## GitHub
-Diese Dateien hochladen:
-- main.py
-- requirements.txt
-- Procfile
-- .gitignore
-
-Token niemals auf GitHub hochladen.
