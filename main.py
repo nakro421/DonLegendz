@@ -556,6 +556,72 @@ class IniCommands(app_commands.Group):
                     f"{reset_liste}"
                 ),
                 discord.Color.dark_blue(),
+
+                @app_commands.command(name="anmelden_fuer", description="Meldet ein Mitglied für eine Ini an")
+@app_commands.choices(
+    tag=[app_commands.Choice(name=t, value=t) for t in TAGE],
+    zeit=[app_commands.Choice(name=z, value=z) for z in ZEITEN],
+)
+async def anmelden_fuer(
+    self,
+    interaction: discord.Interaction,
+    tag: app_commands.Choice[str],
+    zeit: app_commands.Choice[str],
+    mitglied: discord.Member,
+    fiesta_name: str,
+) -> None:
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
+        return
+
+    if not hat_ini_rolle(interaction.user):
+        await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
+        return
+
+    tag_name = tag.value
+    zeit_name = zeit.value
+    fiesta_name = fiesta_name.strip()
+
+    if len(fiesta_name) < 2:
+        await interaction.response.send_message("Der Fiesta-Name ist zu kurz.", ephemeral=True)
+        return
+
+    alte_zeit, _ = finde_eintrag(tag_name, mitglied.id)
+
+    if alte_zeit is not None:
+        await interaction.response.send_message(
+            f"{mitglied.mention} ist für **{tag_name}** bereits bei **{alte_zeit}** angemeldet.",
+            ephemeral=True,
+        )
+        return
+
+    if fiesta_name_existiert(tag_name, fiesta_name):
+        await interaction.response.send_message(
+            "Dieser Fiesta-Name steht an diesem Tag bereits in der Liste.",
+            ephemeral=True,
+        )
+        return
+
+    ini_listen[tag_name][zeit_name][mitglied.id] = fiesta_name
+    await update_ini_message(tag_name)
+
+    await interaction.response.send_message(
+        f"{mitglied.mention} wurde für **{tag_name}** um **{zeit_name}** mit **{fiesta_name}** angemeldet.",
+        ephemeral=True,
+    )
+
+    if interaction.guild:
+        await log_senden(
+            interaction.guild,
+            f"✅ Anmeldung für anderes Mitglied - Ini {tag_name}",
+            (
+                f"**Eingetragen von:** {interaction.user.mention}\n"
+                f"**Angemeldet:** {mitglied.mention}\n"
+                f"**Fiesta:** {fiesta_name}\n"
+                f"**Uhrzeit:** {zeit_name}"
+            ),
+            discord.Color.green(),
+        )
             )
 
     @app_commands.command(name="neu_erstellen", description="Admin: Erstellt die Ini-Nachricht neu")
