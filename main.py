@@ -304,6 +304,15 @@ class IniView(discord.ui.View):
         aendern.callback = self.aendern_callback
         self.add_item(aendern)
 
+        reset = discord.ui.Button(
+            label="Liste resetten",
+            emoji="🧹",
+            style=discord.ButtonStyle.gray,
+            custom_id=f"ini_reset_{tag}",
+        )
+        reset.callback = self.reset_callback
+        self.add_item(reset)
+
     async def anmelden_callback(self, interaction: discord.Interaction):
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
@@ -352,6 +361,31 @@ class IniView(discord.ui.View):
 
     async def aendern_callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(AendernModal(self.tag))
+
+    async def reset_callback(self, interaction: discord.Interaction):
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
+            return
+
+        anzahl = gesamt_teilnehmer(self.tag)
+
+        for zeit in ZEITEN:
+            ini_listen[self.tag][zeit].clear()
+
+        await update_ini_message(self.tag)
+
+        await interaction.response.send_message(
+            f"Die Liste für **{self.tag}** wurde resettet.",
+            ephemeral=True,
+        )
+
+        if interaction.guild:
+            await log_senden(
+                interaction.guild,
+                f"🧹 Reset per Button - Ini {self.tag}",
+                f"**Admin:** {interaction.user.mention}\n**Gelöschte Einträge:** {anzahl}",
+                discord.Color.dark_blue(),
+            )
 
 
 async def finde_ini_message(channel: discord.TextChannel, tag: str):
