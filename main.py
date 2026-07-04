@@ -345,6 +345,12 @@ class ZeitAuswahl(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         zeit = self.values[0]
+
+        try:
+            await interaction.message.delete()
+        except Exception:
+            pass
+
         await interaction.response.send_modal(AnmeldungModal(self.tag, zeit))
 
 
@@ -388,6 +394,11 @@ class AbmeldenAuswahl(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
+        try:
+            await interaction.message.delete()
+        except Exception:
+            pass
+
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True)
             return
