@@ -28,11 +28,11 @@ ADMIN_ROLE_NAME = "Admin"
 INI_ROLE_NAME = "Freund der Ini"
 
 ZEITEN = [
-    "14:00 - 16:00",
-    "16:00 - 18:00",
+    "13:30 - 15:30",
+    "15:30 - 17:30",
     "18:00 - 20:00",
     "20:00 - 22:00",
-    "22:00 - 00:00",
+    "22:30 - 00:30",
 ]
 
 TAGE = list(INI_CHANNELS.keys())
