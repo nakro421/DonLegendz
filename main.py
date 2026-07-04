@@ -28,6 +28,11 @@ ADMIN_ROLE_NAME = "Admin"
 INI_ROLE_NAME = "Freund der Ini"
 
 ZEITEN = [
+    "00:30 - 02:30",
+    "04:30 - 06:30",
+    "06:30 - 08:30",
+    "08:30 - 10:30",
+    "12:30 - 13:30",
     "13:30 - 15:30",
     "15:30 - 17:30",
     "18:00 - 20:00",
@@ -43,6 +48,10 @@ ini_listen: dict[str, dict[str, list[dict]]] = {
     tag: {zeit: [] for zeit in ZEITEN}
     for tag in TAGE
 }
+
+# Cache, damit der Bot nicht bei jedem Klick erst 100 Nachrichten durchsuchen muss.
+# Dadurch reagieren Eintragen/Abmelden/Reset deutlich schneller.
+ini_message_cache: dict[str, discord.Message] = {}
 
 intents = discord.Intents.default()
 intents.members = True
@@ -63,6 +72,11 @@ def ist_admin(member: discord.Member) -> bool:
 
 def hat_ini_rolle(member: discord.Member) -> bool:
     return ist_admin(member) or any(role.name == INI_ROLE_NAME for role in member.roles)
+
+
+def button_label(zeit: str) -> str:
+    # Aus "13:30 - 15:30" wird "13:30-15:30" für kompakte Buttons.
+    return zeit.replace(" ", "")
 
 
 def fiesta_name_existiert_in_zeit(tag: str, zeit: str, fiesta_name: str, ignore_index: int | None = None) -> bool:
@@ -125,6 +139,7 @@ def ini_embed(tag: str) -> discord.Embed:
         title=f"📅 Ini {tag}",
         description="\n\n".join(beschreibung),
         color=discord.Color.blue(),
+        timestamp=datetime.now(),
     )
     embed.set_footer(text=f"Teilnehmer gesamt: {gesamt_teilnehmer(tag)}")
     return embed
@@ -170,9 +185,21 @@ async def get_ini_channel(tag: str) -> discord.TextChannel | None:
 
 
 async def finde_ini_message(channel: discord.TextChannel, tag: str) -> discord.Message | None:
+    # Erst Cache benutzen, damit Updates nach Button-Klicks schneller sind.
+    cached_msg = ini_message_cache.get(tag)
+    if cached_msg is not None:
+        try:
+            msg = await channel.fetch_message(cached_msg.id)
+            if msg.author == bot.user and msg.embeds and msg.embeds[0].title == f"📅 Ini {tag}":
+                ini_message_cache[tag] = msg
+                return msg
+        except Exception:
+            ini_message_cache.pop(tag, None)
+
     async for msg in channel.history(limit=100):
         if msg.author == bot.user and msg.embeds:
             if msg.embeds[0].title == f"📅 Ini {tag}":
+                ini_message_cache[tag] = msg
                 return msg
     return None
 
@@ -188,8 +215,10 @@ async def update_ini_message(tag: str) -> None:
 
     if msg:
         await msg.edit(embed=ini_embed(tag), view=IniView(tag))
+        ini_message_cache[tag] = msg
     else:
-        await channel.send(embed=ini_embed(tag), view=IniView(tag))
+        msg = await channel.send(embed=ini_embed(tag), view=IniView(tag))
+        ini_message_cache[tag] = msg
 
 
 # =========================
@@ -231,6 +260,10 @@ class AnmeldungModal(discord.ui.Modal):
             )
             return
 
+        # Sofort bestätigen, danach erst Liste aktualisieren und Log senden.
+        # Das fühlt sich für User schneller an und verhindert Interaction-Timeouts.
+        await interaction.response.defer(ephemeral=True, thinking=False)
+
         ini_listen[self.tag][self.zeit].append({
             "fiesta": fiesta_name,
             "eingetragen_von": member.id,
@@ -239,10 +272,9 @@ class AnmeldungModal(discord.ui.Modal):
 
         await update_ini_message(self.tag)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"**{fiesta_name}** wurde für **{self.tag}** um **{self.zeit}** angemeldet.",
             ephemeral=True,
-            delete_after=5,
         )
 
         if interaction.guild:
@@ -290,13 +322,14 @@ class AbmeldenModal(discord.ui.Modal):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=False)
+
         del ini_listen[self.tag][zeit][index]
         await update_ini_message(self.tag)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"**{fiesta_name}** wurde von **{self.tag}** um **{zeit}** abgemeldet.",
             ephemeral=True,
-            delete_after=5,
         )
 
         if interaction.guild:
@@ -362,13 +395,14 @@ class AendernModal(discord.ui.Modal):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=False)
+
         ini_listen[self.tag][zeit][index]["fiesta"] = neuer_name
         await update_ini_message(self.tag)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Geändert: **{alter_name}** → **{neuer_name}**",
             ephemeral=True,
-            delete_after=5,
         )
 
         if interaction.guild:
@@ -389,21 +423,13 @@ class IniView(discord.ui.View):
         super().__init__(timeout=None)
         self.tag = tag
 
-        zeit_labels = [
-            ("14-16", "14:00 - 16:00"),
-            ("16-18", "16:00 - 18:00"),
-            ("18-20", "18:00 - 20:00"),
-            ("20-22", "20:00 - 22:00"),
-            ("22-00", "22:00 - 00:00"),
-        ]
-
-        for label, zeit in zeit_labels:
+        for index, zeit in enumerate(ZEITEN):
             button = discord.ui.Button(
-                label=label,
+                label=button_label(zeit),
                 emoji="✅",
                 style=discord.ButtonStyle.green,
-                custom_id=f"ini_anmelden_{tag}_{label}",
-                row=0,
+                custom_id=f"ini_anmelden_{tag}_{index}",
+                row=0 if index < 5 else 1,
             )
             button.callback = self.make_anmelden_callback(zeit)
             self.add_item(button)
@@ -413,7 +439,7 @@ class IniView(discord.ui.View):
             emoji="❌",
             style=discord.ButtonStyle.red,
             custom_id=f"ini_abmelden_{tag}",
-            row=1,
+            row=2,
         )
         abmelden.callback = self.abmelden_callback
         self.add_item(abmelden)
@@ -423,7 +449,7 @@ class IniView(discord.ui.View):
             emoji="✏️",
             style=discord.ButtonStyle.blurple,
             custom_id=f"ini_aendern_{tag}",
-            row=1,
+            row=2,
         )
         aendern.callback = self.aendern_callback
         self.add_item(aendern)
@@ -433,7 +459,7 @@ class IniView(discord.ui.View):
             emoji="🧹",
             style=discord.ButtonStyle.gray,
             custom_id=f"ini_reset_{tag}",
-            row=1,
+            row=2,
         )
         reset.callback = self.reset_callback
         self.add_item(reset)
@@ -453,15 +479,33 @@ class IniView(discord.ui.View):
         return callback
 
     async def abmelden_callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True, delete_after=5)
+            return
+
+        if not hat_ini_rolle(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
         await interaction.response.send_modal(AbmeldenModal(self.tag))
 
     async def aendern_callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True, delete_after=5)
+            return
+
+        if not hat_ini_rolle(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
         await interaction.response.send_modal(AendernModal(self.tag))
 
     async def reset_callback(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
             return
+
+        await interaction.response.defer(ephemeral=True, thinking=False)
 
         anzahl = gesamt_teilnehmer(self.tag)
         reset_liste = alte_liste_als_text(self.tag)
@@ -471,10 +515,9 @@ class IniView(discord.ui.View):
 
         await update_ini_message(self.tag)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Die Liste für **{self.tag}** wurde resettet.",
             ephemeral=True,
-            delete_after=5,
         )
 
         if interaction.guild:
@@ -545,6 +588,8 @@ class IniCommands(app_commands.Group):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=False)
+
         ini_listen[tag_name][zeit_name].append({
             "fiesta": fiesta_name,
             "eingetragen_von": interaction.user.id,
@@ -555,10 +600,9 @@ class IniCommands(app_commands.Group):
 
         ziel_text = mitglied.mention if mitglied else "Ohne Discord-Mitglied"
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"**{fiesta_name}** wurde für **{tag_name}** um **{zeit_name}** angemeldet.",
             ephemeral=True,
-            delete_after=5,
         )
 
         if interaction.guild:
@@ -607,13 +651,14 @@ class IniCommands(app_commands.Group):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=False)
+
         del ini_listen[tag_name][zeit_name][index_gefunden]
         await update_ini_message(tag_name)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"**{fiesta_name}** wurde aus **{tag_name}** um **{zeit_name}** entfernt.",
             ephemeral=True,
-            delete_after=5,
         )
 
         if interaction.guild:
@@ -635,6 +680,8 @@ class IniCommands(app_commands.Group):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=False)
+
         tag_name = tag.value
         anzahl = gesamt_teilnehmer(tag_name)
         reset_liste = alte_liste_als_text(tag_name)
@@ -644,10 +691,9 @@ class IniCommands(app_commands.Group):
 
         await update_ini_message(tag_name)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Die Liste für **{tag_name}** wurde geleert.",
             ephemeral=True,
-            delete_after=5,
         )
 
         if interaction.guild:
@@ -674,12 +720,13 @@ class IniCommands(app_commands.Group):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=False)
+
         await update_ini_message(tag.value)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Die Ini-Nachricht für **{tag.value}** wurde geprüft/erstellt.",
             ephemeral=True,
-            delete_after=5,
         )
 
 
