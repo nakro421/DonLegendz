@@ -20,6 +20,11 @@ LOG_CHANNEL_ID = 1522722541360382144
 # In Railway Volume Mount Path bitte /app/data verwenden.
 DATA_FILE = Path(os.getenv("DATA_FILE", "/app/data/fiesta_data.json"))
 
+# Bewerbungssystem
+BEWERBUNG_CHANNEL_ID = 1523646727461146624
+ADMIN_ABSTIMMUNG_CHANNEL_ID = 1523646973524312164
+MIN_BEWERBUNG_BEGRUENDUNG = 200
+
 
 INI_CHANNELS = {
     "Montag": 1212590388171243570,
@@ -68,6 +73,12 @@ ini_listen: dict[str, dict[str, list[dict]]] = {
 # Cache, damit der Bot die feste Ini-Nachricht nicht jedes Mal neu suchen muss.
 ini_message_cache: dict[str, int] = {}
 
+# Bewerbungsdaten werden ebenfalls dauerhaft gespeichert.
+bewerbungen: dict = {
+    "applications": {},
+    "panel_to_application": {},
+}
+
 
 def leere_ini_listen() -> dict[str, dict[str, list[dict]]]:
     return {tag: {zeit: [] for zeit in ZEITEN} for tag in TAGE}
@@ -96,9 +107,44 @@ def normalisiere_ini_daten(rohdaten: object) -> dict[str, dict[str, list[dict]]]
     return neue_daten
 
 
+def leere_bewerbungsdaten() -> dict:
+    return {
+        "applications": {},
+        "panel_to_application": {},
+    }
+
+
+def normalisiere_bewerbungsdaten(rohdaten: object) -> dict:
+    daten = leere_bewerbungsdaten()
+
+    if not isinstance(rohdaten, dict):
+        return daten
+
+    applications = rohdaten.get("applications", {})
+    panel_to_application = rohdaten.get("panel_to_application", {})
+
+    if isinstance(applications, dict):
+        for app_id, app_data in applications.items():
+            if isinstance(app_data, dict):
+                app_data.setdefault("votes", {})
+                daten["applications"][str(app_id)] = app_data
+
+    if isinstance(panel_to_application, dict):
+        for panel_id, app_id in panel_to_application.items():
+            daten["panel_to_application"][str(panel_id)] = str(app_id)
+
+    # Fallback: Mapping aus vorhandenen Bewerbungen neu erzeugen.
+    for app_id, app_data in daten["applications"].items():
+        panel_id = app_data.get("panel_message_id")
+        if panel_id:
+            daten["panel_to_application"][str(panel_id)] = str(app_id)
+
+    return daten
+
+
 def lade_daten() -> None:
     """Lädt gespeicherte Daten aus dem Railway Volume."""
-    global ini_listen
+    global ini_listen, bewerbungen
 
     if not DATA_FILE.exists():
         ini_listen = leere_ini_listen()
@@ -115,6 +161,7 @@ def lade_daten() -> None:
         return
 
     ini_listen = normalisiere_ini_daten(daten.get("ini", {}))
+    bewerbungen = normalisiere_bewerbungsdaten(daten.get("bewerbungen", {}))
     print(f"Daten geladen: {DATA_FILE}")
 
 
@@ -126,7 +173,7 @@ def speichere_daten() -> None:
         "version": 1,
         "saved_at": datetime.now().isoformat(timespec="seconds"),
         "ini": ini_listen,
-        "bewerbungen": {},
+        "bewerbungen": bewerbungen,
         "klassen": {},
         "settings": {},
     }
@@ -687,6 +734,274 @@ class IniView(discord.ui.View):
             )
 
 
+
+# =========================
+# BEWERBUNGSSYSTEM
+# =========================
+
+async def get_bewerbung_channel() -> discord.TextChannel | None:
+    channel = bot.get_channel(BEWERBUNG_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(BEWERBUNG_CHANNEL_ID)
+        except Exception:
+            return None
+    return channel if isinstance(channel, discord.TextChannel) else None
+
+
+async def get_admin_abstimmung_channel() -> discord.TextChannel | None:
+    channel = bot.get_channel(ADMIN_ABSTIMMUNG_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(ADMIN_ABSTIMMUNG_CHANNEL_ID)
+        except Exception:
+            return None
+    return channel if isinstance(channel, discord.TextChannel) else None
+
+
+def bewerbung_panel_embed(message: discord.Message) -> discord.Embed:
+    embed = discord.Embed(
+        title="🗳️ Anonyme Bewerbungs-Abstimmung",
+        description=(
+            "Stimme für diese Bewerbung ab.\n\n"
+            "✅ **Ja** = aufnehmen\n"
+            "❌ **Nein** = ablehnen\n\n"
+            f"📝 Eine Begründung mit mindestens **{MIN_BEWERBUNG_BEGRUENDUNG} Zeichen** ist Pflicht.\n"
+            "🔒 Deine Stimme ist für normale Mitglieder anonym. Nur du selbst und Admins können sie sehen."
+        ),
+        color=discord.Color.from_rgb(88, 101, 242),
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="Bewerbung", value=f"[Zum Beitrag springen]({message.jump_url})", inline=False)
+    embed.set_footer(text="Bitte fair und sachlich abstimmen.")
+    return embed
+
+
+def admin_vote_embed(
+    *,
+    member: discord.Member,
+    vote: str,
+    reason: str,
+    application_id: str,
+    application_url: str,
+    changed: bool,
+) -> discord.Embed:
+    vote_text = "✅ Ja" if vote == "ja" else "❌ Nein"
+    title = "🗳️ Bewerbungs-Stimme aktualisiert" if changed else "🗳️ Neue Bewerbungs-Stimme"
+    color = discord.Color.green() if vote == "ja" else discord.Color.red()
+
+    embed = discord.Embed(
+        title=title,
+        color=color,
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="Abstimmer", value=f"{member.mention}\n`{member.id}`", inline=True)
+    embed.add_field(name="Stimme", value=vote_text, inline=True)
+    embed.add_field(name="Bewerbung", value=f"[Zum Beitrag springen]({application_url})\n`{application_id}`", inline=False)
+    embed.add_field(name=f"Begründung ({len(reason)} Zeichen)", value=reason[:1000], inline=False)
+    if len(reason) > 1000:
+        embed.add_field(name="Begründung Fortsetzung", value=reason[1000:2000], inline=False)
+    return embed
+
+
+async def erstelle_bewerbungs_panel(message: discord.Message) -> None:
+    """Erstellt unter einer Bewerbung eine Abstimmungsnachricht mit Buttons."""
+    if message.author.bot or message.channel.id != BEWERBUNG_CHANNEL_ID:
+        return
+
+    app_id = str(message.id)
+    if app_id in bewerbungen["applications"]:
+        return
+
+    panel = await message.reply(
+        embed=bewerbung_panel_embed(message),
+        view=BewerbungVoteView(),
+        mention_author=False,
+    )
+
+    bewerbungen["applications"][app_id] = {
+        "channel_id": message.channel.id,
+        "author_id": message.author.id,
+        "message_id": message.id,
+        "message_url": message.jump_url,
+        "panel_message_id": panel.id,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "votes": {},
+    }
+    bewerbungen["panel_to_application"][str(panel.id)] = app_id
+    speichere_daten()
+
+
+async def finde_bewerbung_zu_panel(panel_message_id: int) -> tuple[str | None, dict | None]:
+    panel_id = str(panel_message_id)
+    app_id = bewerbungen["panel_to_application"].get(panel_id)
+    if not app_id:
+        return None, None
+    return app_id, bewerbungen["applications"].get(app_id)
+
+
+class BewerbungVoteModal(discord.ui.Modal):
+    def __init__(self, vote: str, panel_message_id: int):
+        titel = "Ja begründen" if vote == "ja" else "Nein begründen"
+        super().__init__(title=titel)
+        self.vote = vote
+        self.panel_message_id = panel_message_id
+
+        self.reason = discord.ui.TextInput(
+            label=f"Begründung, mindestens {MIN_BEWERBUNG_BEGRUENDUNG} Zeichen",
+            placeholder="Schreibe sachlich, warum du so abstimmst.",
+            style=discord.TextStyle.paragraph,
+            min_length=MIN_BEWERBUNG_BEGRUENDUNG,
+            max_length=1800,
+            required=True,
+        )
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True, delete_after=5)
+            return
+
+        app_id, app_data = await finde_bewerbung_zu_panel(self.panel_message_id)
+        if app_id is None or app_data is None:
+            await interaction.response.send_message(
+                "Diese Abstimmung wurde nicht gefunden. Bitte einen Admin informieren.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        reason = str(self.reason.value).strip()
+        if len(reason) < MIN_BEWERBUNG_BEGRUENDUNG:
+            await interaction.response.send_message(
+                f"Deine Begründung ist zu kurz. Mindestlänge: {MIN_BEWERBUNG_BEGRUENDUNG} Zeichen.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        user_id = str(interaction.user.id)
+        votes = app_data.setdefault("votes", {})
+        changed = user_id in votes
+        votes[user_id] = {
+            "vote": self.vote,
+            "reason": reason,
+            "user_id": interaction.user.id,
+            "user_name": str(interaction.user),
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        speichere_daten()
+
+        admin_channel = await get_admin_abstimmung_channel()
+        if admin_channel is not None:
+            await admin_channel.send(
+                embed=admin_vote_embed(
+                    member=interaction.user,
+                    vote=self.vote,
+                    reason=reason,
+                    application_id=app_id,
+                    application_url=app_data.get("message_url", ""),
+                    changed=changed,
+                )
+            )
+
+        vote_text = "✅ Ja" if self.vote == "ja" else "❌ Nein"
+        await interaction.response.send_message(
+            f"Deine Stimme **{vote_text}** wurde gespeichert. Deine Begründung ist nur für dich und Admins sichtbar.",
+            ephemeral=True,
+            delete_after=15,
+        )
+
+
+class BewerbungVoteView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Ja abstimmen",
+        emoji="✅",
+        style=discord.ButtonStyle.success,
+        custom_id="bewerbung_vote_ja",
+    )
+    async def vote_ja(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(BewerbungVoteModal("ja", interaction.message.id))
+
+    @discord.ui.button(
+        label="Nein abstimmen",
+        emoji="❌",
+        style=discord.ButtonStyle.danger,
+        custom_id="bewerbung_vote_nein",
+    )
+    async def vote_nein(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(BewerbungVoteModal("nein", interaction.message.id))
+
+
+def bewerbung_stimmen_text(app_id: str, app_data: dict) -> str:
+    votes = app_data.get("votes", {})
+    ja = sum(1 for v in votes.values() if v.get("vote") == "ja")
+    nein = sum(1 for v in votes.values() if v.get("vote") == "nein")
+    return (
+        f"**Bewerbung:** [Zum Beitrag springen]({app_data.get('message_url', '')})\n"
+        f"**Ja:** {ja}\n"
+        f"**Nein:** {nein}\n"
+        f"**Gesamt:** {len(votes)}\n"
+        f"**Bewerbungs-ID:** `{app_id}`"
+    )
+
+
+class BewerbungsCommands(app_commands.Group):
+    def __init__(self):
+        super().__init__(name="bewerbung", description="Bewerbungs-Abstimmungen verwalten")
+
+    @app_commands.command(name="panel_erstellen", description="Admin: Erstellt eine Abstimmung für eine Bewerbung per Message-ID")
+    async def panel_erstellen(self, interaction: discord.Interaction, message_id: str) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
+        channel = await get_bewerbung_channel()
+        if channel is None:
+            await interaction.response.send_message("Bewerbungschannel nicht gefunden.", ephemeral=True, delete_after=10)
+            return
+
+        try:
+            message = await channel.fetch_message(int(message_id))
+        except Exception:
+            await interaction.response.send_message("Nachricht nicht gefunden. Prüfe die Message-ID.", ephemeral=True, delete_after=10)
+            return
+
+        if message.author.bot:
+            await interaction.response.send_message("Für Bot-Nachrichten wird kein Bewerbungspanel erstellt.", ephemeral=True, delete_after=10)
+            return
+
+        if str(message.id) in bewerbungen["applications"]:
+            await interaction.response.send_message("Für diese Bewerbung gibt es bereits ein Panel.", ephemeral=True, delete_after=10)
+            return
+
+        await erstelle_bewerbungs_panel(message)
+        await interaction.response.send_message("Abstimmungspanel wurde erstellt.", ephemeral=True, delete_after=10)
+
+    @app_commands.command(name="stimmen", description="Admin: Zeigt die aktuelle Abstimmungs-Zusammenfassung")
+    async def stimmen(self, interaction: discord.Interaction, message_id: str) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
+        key = str(message_id)
+        app_id = key
+        app_data = bewerbungen["applications"].get(app_id)
+
+        if app_data is None:
+            app_id = bewerbungen["panel_to_application"].get(key, "")
+            app_data = bewerbungen["applications"].get(app_id)
+
+        if app_data is None:
+            await interaction.response.send_message("Keine Abstimmung zu dieser ID gefunden.", ephemeral=True, delete_after=10)
+            return
+
+        await interaction.response.send_message(bewerbung_stimmen_text(app_id, app_data), ephemeral=True)
+
+
 # =========================
 # SLASH COMMANDS
 # =========================
@@ -879,6 +1194,20 @@ class IniCommands(app_commands.Group):
         )
 
 
+
+@bot.event
+async def on_message(message: discord.Message) -> None:
+    if message.author.bot:
+        return
+
+    if message.channel.id == BEWERBUNG_CHANNEL_ID:
+        try:
+            await erstelle_bewerbungs_panel(message)
+        except Exception as fehler:
+            print(f"Konnte Bewerbungspanel nicht erstellen: {fehler}")
+
+    await bot.process_commands(message)
+
 # =========================
 # BOT START
 # =========================
@@ -898,8 +1227,15 @@ async def on_ready() -> None:
 
     guild = discord.Object(id=GUILD_ID)
 
+    bot.add_view(BewerbungVoteView())
+
     try:
         bot.tree.add_command(IniCommands(), guild=guild)
+    except app_commands.CommandAlreadyRegistered:
+        pass
+
+    try:
+        bot.tree.add_command(BewerbungsCommands(), guild=guild)
     except app_commands.CommandAlreadyRegistered:
         pass
 
