@@ -1,19 +1,43 @@
-# DonLegendz Discord Bot
+# DonLegendz Bot
+
+Fertiger Discord-Bot mit:
+
+- Ini-Anmeldesystem
+- dauerhafter Speicherung über Railway Volume `/app/data`
+- Bewerbungssystem
+- Prio-Klassen-System für Ini-Zeitfenster
+- automatische Klassen-Sortierung in den Ini-Listen
+
+## Prio-System
+
+Ein Zeitfenster wird erst grün, wenn vorhanden sind:
+
+- 1x Ordi
+- 1x HK
+- 1x Zaubi
+- 1x Hexi
+- 1x Gladi
+- 1x TR
+- 2x Joker
+
+Solange diese Prio nicht erfüllt ist, bleibt das Zeitfenster rot.
 
 ## Railway
-Variables:
-- DISCORD_TOKEN=dein_bot_token
 
-Volume:
-- Mount Path: /app/data
+Volume Mount Path:
 
-Start:
-- Railway nutzt Procfile: worker: python main.py
+```text
+/app/data
+```
 
-## Enthalten
-- Ini-Anmeldesystem mit persistentem JSON-Speicher
-- Modernere Ini-Embeds und Buttons
-- Abmelden mit gezielter Uhrzeit-Auswahl
-- Bewerbungssystem 2.0
-- Anonyme Ja/Nein-Abstimmungen mit min. 200 Zeichen Begründung
-- Admin-Auswertung im Admin-Abstimmungschannel
+Variable:
+
+```text
+DISCORD_TOKEN=dein_token
+```
+
+Start über Procfile:
+
+```text
+worker: python main.py
+```
