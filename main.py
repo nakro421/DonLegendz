@@ -1,4 +1,6 @@
 import os
+import json
+from pathlib import Path
 from datetime import datetime
 
 import discord
@@ -13,6 +15,11 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 
 GUILD_ID = 1212583950468255764
 LOG_CHANNEL_ID = 1522722541360382144
+
+# Datei-Speicher auf Railway Volume.
+# In Railway Volume Mount Path bitte /app/data verwenden.
+DATA_FILE = Path(os.getenv("DATA_FILE", "/app/data/fiesta_data.json"))
+
 
 INI_CHANNELS = {
     "Montag": 1212590388171243570,
@@ -61,6 +68,75 @@ ini_listen: dict[str, dict[str, list[dict]]] = {
 # Cache, damit der Bot die feste Ini-Nachricht nicht jedes Mal neu suchen muss.
 ini_message_cache: dict[str, int] = {}
 
+
+def leere_ini_listen() -> dict[str, dict[str, list[dict]]]:
+    return {tag: {zeit: [] for zeit in ZEITEN} for tag in TAGE}
+
+
+def normalisiere_ini_daten(rohdaten: object) -> dict[str, dict[str, list[dict]]]:
+    """Sorgt dafür, dass neue Tage/Zeiten nach Code-Updates sauber angelegt werden."""
+    neue_daten = leere_ini_listen()
+
+    if not isinstance(rohdaten, dict):
+        return neue_daten
+
+    for tag in TAGE:
+        tag_daten = rohdaten.get(tag, {})
+        if not isinstance(tag_daten, dict):
+            continue
+
+        for zeit in ZEITEN:
+            eintraege = tag_daten.get(zeit, [])
+            if isinstance(eintraege, list):
+                neue_daten[tag][zeit] = [
+                    eintrag for eintrag in eintraege
+                    if isinstance(eintrag, dict) and "fiesta" in eintrag
+                ]
+
+    return neue_daten
+
+
+def lade_daten() -> None:
+    """Lädt gespeicherte Daten aus dem Railway Volume."""
+    global ini_listen
+
+    if not DATA_FILE.exists():
+        ini_listen = leere_ini_listen()
+        speichere_daten()
+        print(f"Neue Datendatei erstellt: {DATA_FILE}")
+        return
+
+    try:
+        with DATA_FILE.open("r", encoding="utf-8") as file:
+            daten = json.load(file)
+    except Exception as fehler:
+        print(f"Konnte Datendatei nicht laden: {fehler}")
+        ini_listen = leere_ini_listen()
+        return
+
+    ini_listen = normalisiere_ini_daten(daten.get("ini", {}))
+    print(f"Daten geladen: {DATA_FILE}")
+
+
+def speichere_daten() -> None:
+    """Speichert alle wichtigen Bot-Daten dauerhaft im Railway Volume."""
+    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    daten = {
+        "version": 1,
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "ini": ini_listen,
+        "bewerbungen": {},
+        "klassen": {},
+        "settings": {},
+    }
+
+    temp_file = DATA_FILE.with_suffix(".tmp")
+    with temp_file.open("w", encoding="utf-8") as file:
+        json.dump(daten, file, ensure_ascii=False, indent=2)
+
+    temp_file.replace(DATA_FILE)
+
 intents = discord.Intents.default()
 intents.members = True
 
@@ -93,6 +169,27 @@ def fiesta_name_existiert_in_zeit(tag: str, zeit: str, fiesta_name: str, ignore_
 
 def gesamt_teilnehmer(tag: str) -> int:
     return sum(len(ini_listen[tag][zeit]) for zeit in ZEITEN)
+
+
+def klassen_emoji(fiesta_name: str) -> str:
+    name = fiesta_name.strip().lower()
+    klassen = {
+        "gladi": "⚔️",
+        "zaubi": "🔮",
+        "hexi": "✨",
+        "tr": "🛡️",
+        "assa": "🗡️",
+        "hk": "❤️",
+        "luna": "🌙",
+        "ordi": "📖",
+        "ss": "🏹",
+    }
+
+    for klasse, emoji in klassen.items():
+        if name == klasse or name.startswith(klasse + " ") or name.startswith(klasse + "-"):
+            return emoji
+
+    return "👤"
 
 
 def finde_eintrag_nach_fiesta(tag: str, fiesta_name: str):
@@ -132,30 +229,46 @@ def alte_liste_als_text(tag: str) -> str:
 
 
 def ini_embed(tag: str) -> discord.Embed:
-    beschreibung = []
-
-    for zeit in ZEITEN:
-        daten = ini_listen[tag][zeit]
-
-        if daten:
-            teilnehmer = "\n".join(
-                f"`{i:02d}.` **{eintrag['fiesta']}**"
-                for i, eintrag in enumerate(daten, start=1)
-            )
-        else:
-            teilnehmer = "*Noch niemand angemeldet.*"
-
-        beschreibung.append(f"### {zeit}\n{teilnehmer}")
+    gesamt = gesamt_teilnehmer(tag)
 
     embed = discord.Embed(
         title=f"📅 Ini {tag}",
-        description="\n\n".join(beschreibung),
-        color=discord.Color.dark_blue(),
+        description=(
+            "**Anmeldungen für heute**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👥 **{gesamt} / ∞ Teilnehmer**"
+        ),
+        color=discord.Color.from_rgb(88, 101, 242),
         timestamp=datetime.now(),
     )
-    embed.set_footer(text=f"Teilnehmer gesamt: {gesamt_teilnehmer(tag)}")
-    return embed
 
+    for zeit in ZEITEN:
+        daten = ini_listen[tag][zeit]
+        anzahl = len(daten)
+
+        if daten:
+            teilnehmer = "\n".join(
+                f"`{i:02d}.` {klassen_emoji(eintrag['fiesta'])} **{eintrag['fiesta']}**"
+                for i, eintrag in enumerate(daten, start=1)
+            )
+            field_name = f"🟢 {zeit}  •  {anzahl} angemeldet"
+            field_value = f"{teilnehmer}"
+        else:
+            field_name = f"🕒 {zeit}  •  0 angemeldet"
+            field_value = "*Noch niemand angemeldet.*"
+
+        embed.add_field(
+            name=field_name,
+            value=field_value,
+            inline=False,
+        )
+
+    embed.add_field(
+        name="━━━━━━━━━━━━━━━━━━━━",
+        value=f"👥 **Teilnehmer gesamt:** {gesamt}  •  🕒 **Aktualisiert:** heute um {datetime.now().strftime('%H:%M')} Uhr",
+        inline=False,
+    )
+    return embed
 
 async def log_senden(guild: discord.Guild, titel: str, text: str, farbe: discord.Color) -> None:
     channel = guild.get_channel(LOG_CHANNEL_ID)
@@ -275,6 +388,7 @@ class AnmeldungModal(discord.ui.Modal):
             "eingetragen_von": member.id,
             "discord_user": member.id,
         })
+        speichere_daten()
 
         await interaction.response.defer(ephemeral=True, thinking=False)
         await update_ini_message(self.tag)
@@ -389,6 +503,7 @@ class AendernModal(discord.ui.Modal):
             return
 
         ini_listen[self.tag][zeit][index]["fiesta"] = neuer_name
+        speichere_daten()
         await interaction.response.defer(ephemeral=True, thinking=False)
         await update_ini_message(self.tag)
         await interaction.followup.send(f"Geändert: **{alter_name}** → **{neuer_name}**", ephemeral=True)
@@ -448,6 +563,7 @@ class AbmeldenZeitView(discord.ui.View):
                 return
 
             del ini_listen[self.tag][zeit][index_gefunden]
+            speichere_daten()
             await interaction.response.defer(ephemeral=True, thinking=False)
             await update_ini_message(self.tag)
             await interaction.followup.send(
@@ -551,6 +667,7 @@ class IniView(discord.ui.View):
 
         for zeit in ZEITEN:
             ini_listen[self.tag][zeit].clear()
+        speichere_daten()
 
         await interaction.response.defer(ephemeral=True, thinking=False)
         await update_ini_message(self.tag)
@@ -629,6 +746,7 @@ class IniCommands(app_commands.Group):
             "eingetragen_von": interaction.user.id,
             "discord_user": mitglied.id if mitglied else None,
         })
+        speichere_daten()
 
         await interaction.response.defer(ephemeral=True, thinking=False)
         await update_ini_message(tag_name)
@@ -687,6 +805,7 @@ class IniCommands(app_commands.Group):
             return
 
         del ini_listen[tag_name][zeit_name][index_gefunden]
+        speichere_daten()
         await interaction.response.defer(ephemeral=True, thinking=False)
         await update_ini_message(tag_name)
 
@@ -720,6 +839,7 @@ class IniCommands(app_commands.Group):
 
         for zeit in ZEITEN:
             ini_listen[tag_name][zeit].clear()
+        speichere_daten()
 
         await interaction.response.defer(ephemeral=True, thinking=False)
         await update_ini_message(tag_name)
@@ -773,6 +893,8 @@ async def on_ready() -> None:
         return
 
     bot_ready_done = True
+
+    lade_daten()
 
     guild = discord.Object(id=GUILD_ID)
 
