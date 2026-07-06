@@ -61,41 +61,6 @@ BUTTON_LABELS = {
     "00:30 - 02:30": "00:30",
 }
 
-KLASSEN_REIHENFOLGE = [
-    "Gladi",
-    "Hexi",
-    "Zaubi",
-    "TR",
-    "Assa",
-    "HK",
-    "Luna",
-    "Ordi",
-    "SS",
-]
-
-KLASSEN_EMOJIS = {
-    "Gladi": "🪓",
-    "Zaubi": "🪄",
-    "Hexi": "📖",
-    "TR": "🗡️",
-    "Assa": "⚔️",
-    "HK": "❤️",
-    "Luna": "⚔️",
-    "Ordi": "🛡️",
-    "SS": "🏹",
-}
-
-# Ein Zeitfenster wird erst grün, wenn diese Prio erfüllt ist.
-PRIO_KLASSEN = {
-    "Ordi": 1,
-    "HK": 1,
-    "Zaubi": 1,
-    "Hexi": 1,
-    "Gladi": 1,
-    "TR": 1,
-}
-PRIO_JOKER = 2
-
 TAGE = list(INI_CHANNELS.keys())
 
 # Gleiche Namen dürfen in unterschiedlichen Uhrzeiten mehrfach stehen.
@@ -253,89 +218,25 @@ def gesamt_teilnehmer(tag: str) -> int:
     return sum(len(ini_listen[tag][zeit]) for zeit in ZEITEN)
 
 
-def erkenne_klasse(fiesta_name: str) -> str | None:
-    """Erkennt die Klasse am Anfang des Fiesta-Namens, z. B. 'HK Emi' oder 'Gladi-Lukas'."""
+def klassen_emoji(fiesta_name: str) -> str:
     name = fiesta_name.strip().lower()
-    if not name:
-        return None
-
-    aliases = {
-        "gladi": "Gladi",
-        "zaubi": "Zaubi",
-        "hexi": "Hexi",
-        "tr": "TR",
-        "assa": "Assa",
-        "hk": "HK",
-        "luna": "Luna",
-        "ordi": "Ordi",
-        "ss": "SS",
+    klassen = {
+        "gladi": "⚔️",
+        "zaubi": "🔮",
+        "hexi": "✨",
+        "tr": "🛡️",
+        "assa": "🗡️",
+        "hk": "❤️",
+        "luna": "🌙",
+        "ordi": "📖",
+        "ss": "🏹",
     }
 
-    erstes_wort = name.replace("-", " ").replace("|", " ").split()[0] if name.replace("-", " ").replace("|", " ").split() else ""
-    return aliases.get(erstes_wort)
+    for klasse, emoji in klassen.items():
+        if name == klasse or name.startswith(klasse + " ") or name.startswith(klasse + "-"):
+            return emoji
 
-
-def klassen_emoji(fiesta_name: str) -> str:
-    klasse = erkenne_klasse(fiesta_name)
-    if klasse:
-        return KLASSEN_EMOJIS.get(klasse, "👤")
     return "👤"
-
-
-def sortiere_eintraege_nach_klasse(eintraege: list[dict]) -> list[dict]:
-    def sort_key(eintrag: dict):
-        fiesta = str(eintrag.get("fiesta", ""))
-        klasse = erkenne_klasse(fiesta)
-        if klasse in KLASSEN_REIHENFOLGE:
-            return (KLASSEN_REIHENFOLGE.index(klasse), fiesta.lower())
-        return (999, fiesta.lower())
-
-    return sorted(eintraege, key=sort_key)
-
-
-def zeitfenster_prio_status(eintraege: list[dict]) -> tuple[bool, dict[str, int], int]:
-    counts: dict[str, int] = {}
-
-    for eintrag in eintraege:
-        klasse = erkenne_klasse(str(eintrag.get("fiesta", "")))
-        if klasse:
-            counts[klasse] = counts.get(klasse, 0) + 1
-
-    pflicht_erfuellt = all(
-        counts.get(klasse, 0) >= benoetigt
-        for klasse, benoetigt in PRIO_KLASSEN.items()
-    )
-    mindest_anzahl = sum(PRIO_KLASSEN.values()) + PRIO_JOKER
-    vollstaendig = pflicht_erfuellt and len(eintraege) >= mindest_anzahl
-    return vollstaendig, counts, mindest_anzahl
-
-
-def zeitfenster_ist_vollstaendig(eintraege: list[dict]) -> bool:
-    vollstaendig, _, _ = zeitfenster_prio_status(eintraege)
-    return vollstaendig
-
-
-def fehlende_prio_klassen_text(eintraege: list[dict]) -> str:
-    vollstaendig, counts, mindest_anzahl = zeitfenster_prio_status(eintraege)
-    if vollstaendig:
-        return "✅ Prio erfüllt"
-
-    fehlend = []
-    for klasse, benoetigt in PRIO_KLASSEN.items():
-        vorhanden = counts.get(klasse, 0)
-        if vorhanden < benoetigt:
-            emoji = KLASSEN_EMOJIS.get(klasse, "")
-            fehlend.append(f"{emoji} {klasse}")
-
-    joker_vorhanden = max(0, len(eintraege) - sum(min(counts.get(k, 0), v) for k, v in PRIO_KLASSEN.items()))
-    joker_fehlend = max(0, PRIO_JOKER - joker_vorhanden)
-    if joker_fehlend:
-        fehlend.append(f"{joker_fehlend}x Joker")
-
-    if not fehlend:
-        fehlend.append(f"noch {max(0, mindest_anzahl - len(eintraege))} Spieler")
-
-    return "Fehlt: " + ", ".join(fehlend)
 
 
 def finde_eintrag_nach_fiesta(tag: str, fiesta_name: str):
@@ -382,8 +283,7 @@ def ini_embed(tag: str) -> discord.Embed:
         description=(
             "**Anmeldungen für heute**\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"👥 **{gesamt} / ∞ Teilnehmer**\n"
-            "🎯 **Prio:** 1x Ordi • 1x HK • 1x Zaubi • 1x Hexi • 1x Gladi • 1x TR • 2x Joker"
+            f"👥 **{gesamt} / ∞ Teilnehmer**"
         ),
         color=discord.Color.from_rgb(88, 101, 242),
         timestamp=datetime.now(),
@@ -392,21 +292,20 @@ def ini_embed(tag: str) -> discord.Embed:
     for zeit in ZEITEN:
         daten = ini_listen[tag][zeit]
         anzahl = len(daten)
-        ist_voll = zeitfenster_ist_vollstaendig(daten)
-        status = "🟢" if ist_voll else "🔴"
 
         if daten:
-            sortierte_daten = sortiere_eintraege_nach_klasse(daten)
             teilnehmer = "\n".join(
                 f"`{i:02d}.` {klassen_emoji(eintrag['fiesta'])} **{eintrag['fiesta']}**"
-                for i, eintrag in enumerate(sortierte_daten, start=1)
+                for i, eintrag in enumerate(daten, start=1)
             )
-            field_value = f"{teilnehmer}\n*{fehlende_prio_klassen_text(daten)}*"
+            field_name = f"🟢 {zeit}  •  {anzahl} angemeldet"
+            field_value = f"{teilnehmer}"
         else:
-            field_value = "*Noch niemand angemeldet.*\n*Fehlt: Ordi, HK, Zaubi, Hexi, Gladi, TR, 2x Joker*"
+            field_name = f"🕒 {zeit}  •  0 angemeldet"
+            field_value = "*Noch niemand angemeldet.*"
 
         embed.add_field(
-            name=f"{status} {zeit}  •  {anzahl} angemeldet",
+            name=field_name,
             value=field_value,
             inline=False,
         )
@@ -740,7 +639,7 @@ class IniView(discord.ui.View):
             button = discord.ui.Button(
                 label=BUTTON_LABELS.get(zeit, zeit),
                 emoji="🕒",
-                style=discord.ButtonStyle.success if zeitfenster_ist_vollstaendig(ini_listen[tag][zeit]) else discord.ButtonStyle.danger,
+                style=discord.ButtonStyle.secondary,
                 custom_id=f"ini_anmelden_{tag}_{index}",
                 row=row,
             )
