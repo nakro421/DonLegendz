@@ -221,14 +221,14 @@ def gesamt_teilnehmer(tag: str) -> int:
 def klassen_emoji(fiesta_name: str) -> str:
     name = fiesta_name.strip().lower()
     klassen = {
-        "gladi": "⚔️",
+        "gladi": "🪓",
         "zaubi": "🔮",
         "hexi": "✨",
-        "tr": "🛡️",
-        "assa": "🗡️",
+        "tr": "🗡",
+        "assa": "⚔️",
         "hk": "❤️",
-        "luna": "🌙",
-        "ordi": "📖",
+        "luna": "⚔️",
+        "ordi": "🛡️",
         "ss": "🏹",
     }
 
