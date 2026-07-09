@@ -402,13 +402,13 @@ class AnmeldungModal(discord.ui.Modal):
         self.zeit = zeit
 
         self.name = discord.ui.TextInput(
-    label="Klasse - Name eintragen",
-    placeholder="Beispiel: HK - Emi",
-    min_length=2,
-    max_length=40,
-    required=True,
-)
-self.add_item(self.name)
+            label="Klasse - Name eintragen",
+            placeholder="Beispiel: HK - Emi",
+            min_length=2,
+            max_length=40,
+            required=True,
+        )
+        self.add_item(self.name)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member):
