@@ -408,8 +408,7 @@ class AnmeldungModal(discord.ui.Modal):
     max_length=40,
     required=True,
 )
-        )
-        self.add_item(self.name)
+self.add_item(self.name)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member):
