@@ -402,11 +402,12 @@ class AnmeldungModal(discord.ui.Modal):
         self.zeit = zeit
 
         self.name = discord.ui.TextInput(
-            label="Fiesta-Charaktername",
-            placeholder="Dein Fiesta-Name oder Name von jemand anderem",
-            min_length=2,
-            max_length=30,
-            required=True,
+    label="Klasse - Name eintragen",
+    placeholder="Beispiel: HK - Emi",
+    min_length=2,
+    max_length=40,
+    required=True,
+)
         )
         self.add_item(self.name)
 
