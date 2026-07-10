@@ -39,91 +39,26 @@ INI_CHANNELS = {
 ADMIN_ROLE_NAME = "Admin"
 INI_ROLE_NAME = "Freund der Ini"
 
-ALLE_ZEITFENSTER = [
-    f"{stunde:02d}:00 - {(stunde + 1) % 24:02d}:00"
-    for stunde in range(24)
+STANDARD_ZEITEN = [
+    "09:00 - 11:00",
+    "11:00 - 13:00",
+    "13:30 - 15:30",
+    "15:30 - 17:30",
+    "18:00 - 20:00",
+    "20:00 - 22:00",
+    "22:30 - 00:30",
+    "00:30 - 02:30",
 ]
 
-STANDARD_ZEITEN_PRO_TAG = {
-    "Montag": [
-        "09:00 - 10:00",
-        "11:00 - 12:00",
-        "13:00 - 14:00",
-        "15:00 - 16:00",
-        "18:00 - 19:00",
-        "20:00 - 21:00",
-        "22:00 - 23:00",
-        "00:00 - 01:00",
-    ],
-    "Dienstag": [
-        "09:00 - 10:00",
-        "11:00 - 12:00",
-        "13:00 - 14:00",
-        "15:00 - 16:00",
-        "18:00 - 19:00",
-        "20:00 - 21:00",
-        "22:00 - 23:00",
-        "00:00 - 01:00",
-    ],
-    "Mittwoch": [
-        "09:00 - 10:00",
-        "11:00 - 12:00",
-        "13:00 - 14:00",
-        "15:00 - 16:00",
-        "18:00 - 19:00",
-        "20:00 - 21:00",
-        "22:00 - 23:00",
-        "00:00 - 01:00",
-    ],
-    "Donnerstag": [
-        "09:00 - 10:00",
-        "11:00 - 12:00",
-        "13:00 - 14:00",
-        "15:00 - 16:00",
-        "18:00 - 19:00",
-        "20:00 - 21:00",
-        "22:00 - 23:00",
-        "00:00 - 01:00",
-    ],
-    "Freitag": [
-        "09:00 - 10:00",
-        "11:00 - 12:00",
-        "13:00 - 14:00",
-        "15:00 - 16:00",
-        "18:00 - 19:00",
-        "20:00 - 21:00",
-        "22:00 - 23:00",
-        "00:00 - 01:00",
-    ],
-    "Samstag": [
-        "09:00 - 10:00",
-        "11:00 - 12:00",
-        "13:00 - 14:00",
-        "15:00 - 16:00",
-        "18:00 - 19:00",
-        "20:00 - 21:00",
-        "22:00 - 23:00",
-        "00:00 - 01:00",
-    ],
-    "Sonntag": [
-        "09:00 - 10:00",
-        "11:00 - 12:00",
-        "13:00 - 14:00",
-        "15:00 - 16:00",
-        "18:00 - 19:00",
-        "20:00 - 21:00",
-        "22:00 - 23:00",
-        "00:00 - 01:00",
-    ],
+# Jeder Wochentag besitzt seine eigenen, frei konfigurierbaren Zeitfenster.
+zeiten_pro_tag: dict[str, list[str]] = {
+    tag: list(STANDARD_ZEITEN)
+    for tag in INI_CHANNELS.keys()
 }
+
+MAX_ZEITEN_PRO_TAG = 25
 
 TAGE = list(INI_CHANNELS.keys())
-
-# Pro Wochentag separat festgelegte, aktive Ini-Zeitfenster.
-zeiten_pro_tag: dict[str, list[str]] = {
-    tag: list(STANDARD_ZEITEN_PRO_TAG.get(tag, []))
-    for tag in TAGE
-}
 
 # Gleiche Namen dürfen in unterschiedlichen Uhrzeiten mehrfach stehen.
 # Nur im selben Zeitfenster wird ein doppelter Name blockiert.
@@ -150,7 +85,7 @@ def leere_ini_listen() -> dict[str, dict[str, list[dict]]]:
 
 
 def normalisiere_ini_daten(rohdaten: object) -> dict[str, dict[str, list[dict]]]:
-    """Lädt nur gültige Ini-Einträge und bewahrt belegte alte Zeitfenster."""
+    """Lädt Ini-Daten passend zu den pro Tag konfigurierten Zeitfenstern."""
     neue_daten = leere_ini_listen()
 
     if not isinstance(rohdaten, dict):
@@ -169,7 +104,7 @@ def normalisiere_ini_daten(rohdaten: object) -> dict[str, dict[str, list[dict]]]
                     if isinstance(eintrag, dict) and "fiesta" in eintrag
                 ]
 
-        # Alte, belegte Zeitfenster nicht verlieren.
+        # Alte belegte Zeitfenster werden nicht verworfen.
         for zeit, eintraege in tag_daten.items():
             if (
                 zeit not in neue_daten[tag]
@@ -225,7 +160,7 @@ def lade_daten() -> None:
 
     if not DATA_FILE.exists():
         zeiten_pro_tag = {
-            tag: list(STANDARD_ZEITEN_PRO_TAG.get(tag, []))
+            tag: list(STANDARD_ZEITEN)
             for tag in TAGE
         }
         ini_listen = leere_ini_listen()
@@ -239,31 +174,48 @@ def lade_daten() -> None:
     except Exception as fehler:
         print(f"Konnte Datendatei nicht laden: {fehler}")
         zeiten_pro_tag = {
-            tag: list(STANDARD_ZEITEN_PRO_TAG.get(tag, []))
+            tag: list(STANDARD_ZEITEN)
             for tag in TAGE
         }
         ini_listen = leere_ini_listen()
         return
 
     settings = daten.get("settings", {})
-    gespeicherte_zeiten = settings.get("zeiten_pro_tag", {}) if isinstance(settings, dict) else {}
+    gespeicherte_zeiten = (
+        settings.get("zeiten_pro_tag", {})
+        if isinstance(settings, dict)
+        else {}
+    )
 
-    neue_zeiten_pro_tag: dict[str, list[str]] = {}
+    neue_zeiten: dict[str, list[str]] = {}
     for tag in TAGE:
-        rohe_zeiten = gespeicherte_zeiten.get(tag, []) if isinstance(gespeicherte_zeiten, dict) else []
-        if isinstance(rohe_zeiten, list):
-            gueltige_zeiten = [
-                zeit for zeit in ALLE_ZEITFENSTER
-                if zeit in rohe_zeiten
-            ]
-        else:
-            gueltige_zeiten = []
-
-        neue_zeiten_pro_tag[tag] = gueltige_zeiten or list(
-            STANDARD_ZEITEN_PRO_TAG.get(tag, [])
+        tag_zeiten = (
+            gespeicherte_zeiten.get(tag, [])
+            if isinstance(gespeicherte_zeiten, dict)
+            else []
         )
+        if isinstance(tag_zeiten, list):
+            bereinigt = [
+                str(zeit).strip()
+                for zeit in tag_zeiten
+                if isinstance(zeit, str) and str(zeit).strip()
+            ]
+            neue_zeiten[tag] = list(dict.fromkeys(bereinigt))[:MAX_ZEITEN_PRO_TAG]
+        else:
+            neue_zeiten[tag] = []
 
-    zeiten_pro_tag = neue_zeiten_pro_tag
+        # Migration von älteren Dateien ohne dynamische Einstellungen.
+        if not neue_zeiten[tag]:
+            alte_tag_daten = daten.get("ini", {}).get(tag, {})
+            if isinstance(alte_tag_daten, dict) and alte_tag_daten:
+                neue_zeiten[tag] = list(alte_tag_daten.keys())[:MAX_ZEITEN_PRO_TAG]
+            else:
+                neue_zeiten[tag] = list(STANDARD_ZEITEN)
+
+    zeiten_pro_tag = neue_zeiten
+    for tag in TAGE:
+        sortiere_zeiten(tag)
+
     ini_listen = normalisiere_ini_daten(daten.get("ini", {}))
     bewerbungen = normalisiere_bewerbungsdaten(daten.get("bewerbungen", {}))
     print(f"Daten geladen: {DATA_FILE}")
@@ -315,30 +267,93 @@ def aktive_zeiten(tag: str) -> list[str]:
     return list(zeiten_pro_tag.get(tag, []))
 
 
+def zeit_zu_minuten(wert: str) -> int | None:
+    try:
+        zeit = datetime.strptime(wert.strip(), "%H:%M")
+    except ValueError:
+        return None
+    return zeit.hour * 60 + zeit.minute
+
+
+def zeitfenster_erstellen(start: str, ende: str) -> str | None:
+    start_min = zeit_zu_minuten(start)
+    ende_min = zeit_zu_minuten(ende)
+
+    if start_min is None or ende_min is None or start_min == ende_min:
+        return None
+
+    return f"{start_min // 60:02d}:{start_min % 60:02d} - {ende_min // 60:02d}:{ende_min % 60:02d}"
+
+
+def zeitfenster_minuten(zeitfenster: str) -> tuple[int, int] | None:
+    try:
+        start_text, ende_text = [teil.strip() for teil in zeitfenster.split("-", 1)]
+    except ValueError:
+        return None
+
+    start_min = zeit_zu_minuten(start_text)
+    ende_min = zeit_zu_minuten(ende_text)
+    if start_min is None or ende_min is None or start_min == ende_min:
+        return None
+
+    return start_min, ende_min
+
+
+def intervall_segmente(start: int, ende: int) -> list[tuple[int, int]]:
+    if start < ende:
+        return [(start, ende)]
+    return [(start, 1440), (0, ende)]
+
+
+def zeitfenster_ueberschneiden(a: str, b: str) -> bool:
+    a_min = zeitfenster_minuten(a)
+    b_min = zeitfenster_minuten(b)
+    if a_min is None or b_min is None:
+        return False
+
+    for a_start, a_ende in intervall_segmente(*a_min):
+        for b_start, b_ende in intervall_segmente(*b_min):
+            if max(a_start, b_start) < min(a_ende, b_ende):
+                return True
+    return False
+
+
+def zeitfenster_hat_ueberschneidung(
+    tag: str,
+    neues_zeitfenster: str,
+    ignorieren: str | None = None,
+) -> bool:
+    for vorhandenes in aktive_zeiten(tag):
+        if ignorieren is not None and vorhandenes == ignorieren:
+            continue
+        if zeitfenster_ueberschneiden(vorhandenes, neues_zeitfenster):
+            return True
+    return False
+
+
+def sortiere_zeiten(tag: str) -> None:
+    def sortierschluessel(zeitfenster: str) -> tuple[int, str]:
+        minuten = zeitfenster_minuten(zeitfenster)
+        return (minuten[0], zeitfenster) if minuten else (9999, zeitfenster)
+
+    zeiten_pro_tag.setdefault(tag, [])
+    zeiten_pro_tag[tag].sort(key=sortierschluessel)
+
+
 async def zeit_autocomplete(
     interaction: discord.Interaction,
     current: str,
 ) -> list[app_commands.Choice[str]]:
-    tag_name = None
     namespace = getattr(interaction, "namespace", None)
-    tag_value = getattr(namespace, "tag", None) if namespace else None
+    tag_wert = getattr(namespace, "tag", None) if namespace else None
+    tag_name = tag_wert if isinstance(tag_wert, str) else ""
 
-    if isinstance(tag_value, str):
-        tag_name = tag_value
-
-    kandidaten = aktive_zeiten(tag_name) if tag_name in TAGE else []
     current = current.strip().lower()
-
     return [
         app_commands.Choice(name=zeit, value=zeit)
-        for zeit in kandidaten
+        for zeit in aktive_zeiten(tag_name)
         if current in zeit.lower()
     ][:25]
-
-
-async def aktualisiere_alle_ini_nachrichten() -> None:
-    for tag in TAGE:
-        await update_ini_message(tag)
 
 
 def fiesta_name_existiert_in_zeit(tag: str, zeit: str, fiesta_name: str, ignore_index: int | None = None) -> bool:
@@ -399,10 +414,11 @@ def alte_liste_als_text(tag: str) -> str:
     teile = []
 
     zeiten = aktive_zeiten(tag)
+
     if not zeiten:
         embed.add_field(
-            name="⛔ Keine Uhrzeiten freigegeben",
-            value="Ein Admin muss zuerst mit `/ini uhrzeiten_festlegen` Uhrzeiten auswählen.",
+            name="⛔ Keine Uhrzeiten festgelegt",
+            value="Ein Admin muss zuerst eine Uhrzeit hinzufügen.",
             inline=False,
         )
 
@@ -437,10 +453,11 @@ def ini_embed(tag: str) -> discord.Embed:
     )
 
     zeiten = aktive_zeiten(tag)
+
     if not zeiten:
         embed.add_field(
-            name="⛔ Keine Uhrzeiten freigegeben",
-            value="Ein Admin muss zuerst mit `/ini uhrzeiten_festlegen` Uhrzeiten auswählen.",
+            name="⛔ Keine Uhrzeiten festgelegt",
+            value="Ein Admin muss zuerst eine Uhrzeit hinzufügen.",
             inline=False,
         )
 
@@ -719,6 +736,167 @@ class AendernModal(discord.ui.Modal):
             )
 
 
+class UhrzeitHinzufuegenModal(discord.ui.Modal):
+    def __init__(self, tag: str):
+        super().__init__(title=f"Uhrzeit hinzufügen - {tag}")
+        self.tag = tag
+
+        self.start = discord.ui.TextInput(
+            label="Startzeit",
+            placeholder="Beispiel: 19:15",
+            min_length=5,
+            max_length=5,
+            required=True,
+        )
+        self.ende = discord.ui.TextInput(
+            label="Endzeit",
+            placeholder="Beispiel: 20:45",
+            min_length=5,
+            max_length=5,
+            required=True,
+        )
+        self.add_item(self.start)
+        self.add_item(self.ende)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
+        zeitfenster = zeitfenster_erstellen(str(self.start.value), str(self.ende.value))
+        if zeitfenster is None:
+            await interaction.response.send_message(
+                "Ungültige Uhrzeit. Verwende `HH:MM` und unterschiedliche Start-/Endzeiten.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        if zeitfenster in aktive_zeiten(self.tag):
+            await interaction.response.send_message(
+                "Dieses Zeitfenster existiert bereits.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        if len(aktive_zeiten(self.tag)) >= MAX_ZEITEN_PRO_TAG:
+            await interaction.response.send_message(
+                f"Pro Tag sind maximal **{MAX_ZEITEN_PRO_TAG}** Zeitfenster möglich.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        if zeitfenster_hat_ueberschneidung(self.tag, zeitfenster):
+            await interaction.response.send_message(
+                "Dieses Zeitfenster überschneidet sich mit einer bereits vorhandenen Uhrzeit.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        zeiten_pro_tag.setdefault(self.tag, []).append(zeitfenster)
+        sortiere_zeiten(self.tag)
+        ini_listen.setdefault(self.tag, {})[zeitfenster] = []
+        speichere_daten()
+
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        await update_ini_message(self.tag)
+        await interaction.followup.send(
+            f"**{zeitfenster}** wurde für **{self.tag}** hinzugefügt.",
+            ephemeral=True,
+        )
+
+
+class UhrzeitBearbeitenModal(discord.ui.Modal):
+    def __init__(self, tag: str, alte_zeit: str):
+        super().__init__(title=f"Uhrzeit bearbeiten - {tag}")
+        self.tag = tag
+        self.alte_zeit = alte_zeit
+
+        minuten = zeitfenster_minuten(alte_zeit)
+        start_vorgabe = f"{minuten[0] // 60:02d}:{minuten[0] % 60:02d}" if minuten else ""
+        ende_vorgabe = f"{minuten[1] // 60:02d}:{minuten[1] % 60:02d}" if minuten else ""
+
+        self.start = discord.ui.TextInput(
+            label="Neue Startzeit",
+            default=start_vorgabe,
+            min_length=5,
+            max_length=5,
+            required=True,
+        )
+        self.ende = discord.ui.TextInput(
+            label="Neue Endzeit",
+            default=ende_vorgabe,
+            min_length=5,
+            max_length=5,
+            required=True,
+        )
+        self.add_item(self.start)
+        self.add_item(self.ende)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
+        if self.alte_zeit not in aktive_zeiten(self.tag):
+            await interaction.response.send_message(
+                "Das alte Zeitfenster existiert nicht mehr.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        neues_zeitfenster = zeitfenster_erstellen(str(self.start.value), str(self.ende.value))
+        if neues_zeitfenster is None:
+            await interaction.response.send_message(
+                "Ungültige Uhrzeit. Verwende `HH:MM` und unterschiedliche Start-/Endzeiten.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        if (
+            neues_zeitfenster != self.alte_zeit
+            and neues_zeitfenster in aktive_zeiten(self.tag)
+        ):
+            await interaction.response.send_message(
+                "Dieses Zeitfenster existiert bereits.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        if zeitfenster_hat_ueberschneidung(
+            self.tag,
+            neues_zeitfenster,
+            ignorieren=self.alte_zeit,
+        ):
+            await interaction.response.send_message(
+                "Das neue Zeitfenster überschneidet sich mit einer anderen Uhrzeit.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        index = zeiten_pro_tag[self.tag].index(self.alte_zeit)
+        zeiten_pro_tag[self.tag][index] = neues_zeitfenster
+        sortiere_zeiten(self.tag)
+
+        vorhandene_eintraege = ini_listen.setdefault(self.tag, {}).pop(self.alte_zeit, [])
+        ini_listen[self.tag][neues_zeitfenster] = vorhandene_eintraege
+        speichere_daten()
+
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        await update_ini_message(self.tag)
+        await interaction.followup.send(
+            f"Geändert: **{self.alte_zeit}** → **{neues_zeitfenster}**",
+            ephemeral=True,
+        )
+
+
 # =========================
 # VIEWS / BUTTONS
 # =========================
@@ -749,6 +927,7 @@ class AbmeldenZeitSelect(discord.ui.Select):
 
         zeit = self.values[0]
         index_gefunden = None
+
         for index, eintrag in enumerate(ini_listen.get(self.tag, {}).get(zeit, [])):
             if eintrag["fiesta"].lower() == self.fiesta_name.lower():
                 index_gefunden = index
@@ -764,6 +943,7 @@ class AbmeldenZeitSelect(discord.ui.Select):
 
         del ini_listen[self.tag][zeit][index_gefunden]
         speichere_daten()
+
         await interaction.response.defer(ephemeral=True, thinking=False)
         await update_ini_message(self.tag)
         await interaction.followup.send(
@@ -799,7 +979,7 @@ class IniZeitSelect(discord.ui.Select):
         if not optionen:
             optionen = [
                 discord.SelectOption(
-                    label="Keine Uhrzeiten freigegeben",
+                    label="Keine Uhrzeiten verfügbar",
                     value="__keine__",
                     emoji="⛔",
                 )
@@ -833,99 +1013,6 @@ class IniZeitSelect(discord.ui.Select):
             return
 
         await interaction.response.send_modal(AnmeldungModal(self.tag, zeit))
-
-
-class AdminZeitfensterSelect(discord.ui.Select):
-    def __init__(self, tag: str):
-        self.tag = tag
-        aktive = set(aktive_zeiten(tag))
-
-        options = [
-            discord.SelectOption(
-                label=zeit,
-                value=zeit,
-                emoji="🕒",
-                default=zeit in aktive,
-            )
-            for zeit in ALLE_ZEITFENSTER
-        ]
-
-        super().__init__(
-            placeholder=f"Uhrzeiten für {tag} auswählen",
-            min_values=1,
-            max_values=24,
-            options=options,
-            custom_id=f"ini_admin_zeiten_{tag}",
-        )
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
-            await interaction.response.send_message(
-                "Du hast dafür keine Rechte.",
-                ephemeral=True,
-                delete_after=5,
-            )
-            return
-
-        neue_zeiten = [
-            zeit for zeit in ALLE_ZEITFENSTER
-            if zeit in self.values
-        ]
-        alte_zeiten = aktive_zeiten(self.tag)
-        entfernte_zeiten = [
-            zeit for zeit in alte_zeiten
-            if zeit not in neue_zeiten
-        ]
-
-        belegte_entfernte = [
-            zeit for zeit in entfernte_zeiten
-            if ini_listen.get(self.tag, {}).get(zeit)
-        ]
-
-        if belegte_entfernte:
-            await interaction.response.send_message(
-                "Folgende Uhrzeiten können nicht entfernt werden, weil dort "
-                "noch Anmeldungen vorhanden sind:\n"
-                + "\n".join(f"• **{zeit}**" for zeit in belegte_entfernte),
-                ephemeral=True,
-                delete_after=15,
-            )
-            return
-
-        zeiten_pro_tag[self.tag] = neue_zeiten
-        ini_listen.setdefault(self.tag, {})
-
-        for zeit in neue_zeiten:
-            ini_listen[self.tag].setdefault(zeit, [])
-
-        for zeit in entfernte_zeiten:
-            ini_listen[self.tag].pop(zeit, None)
-
-        speichere_daten()
-
-        await interaction.response.defer(ephemeral=True, thinking=False)
-        await update_ini_message(self.tag)
-        await interaction.followup.send(
-            f"Die Uhrzeiten für **{self.tag}** wurden gespeichert:\n"
-            + "\n".join(f"• {zeit}" for zeit in neue_zeiten),
-            ephemeral=True,
-        )
-
-        if interaction.guild:
-            await log_senden(
-                interaction.guild,
-                f"🕒 Ini-Uhrzeiten geändert - {self.tag}",
-                f"**Admin:** {interaction.user.mention}\n"
-                f"**Aktive Uhrzeiten:**\n"
-                + "\n".join(f"• {zeit}" for zeit in neue_zeiten),
-                discord.Color.dark_blue(),
-            )
-
-
-class AdminZeitfensterView(discord.ui.View):
-    def __init__(self, tag: str):
-        super().__init__(timeout=180)
-        self.add_item(AdminZeitfensterSelect(tag))
 
 
 class IniView(discord.ui.View):
@@ -1695,27 +1782,114 @@ class IniCommands(app_commands.Group):
             )
 
     @app_commands.command(
-        name="uhrzeiten_festlegen",
-        description="Admin: Legt die verfügbaren Ini-Uhrzeiten für einen Tag fest",
+        name="uhrzeit_hinzufuegen",
+        description="Admin: Fügt einem Tag ein freies Zeitfenster hinzu",
     )
     @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
-    async def uhrzeiten_festlegen(
+    async def uhrzeit_hinzufuegen(
         self,
         interaction: discord.Interaction,
         tag: app_commands.Choice[str],
     ) -> None:
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
+        await interaction.response.send_modal(UhrzeitHinzufuegenModal(tag.value))
+
+    @app_commands.command(
+        name="uhrzeit_bearbeiten",
+        description="Admin: Bearbeitet ein vorhandenes Zeitfenster",
+    )
+    @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
+    @app_commands.autocomplete(zeit=zeit_autocomplete)
+    async def uhrzeit_bearbeiten(
+        self,
+        interaction: discord.Interaction,
+        tag: app_commands.Choice[str],
+        zeit: str,
+    ) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
+        zeit = zeit.strip()
+        if zeit not in aktive_zeiten(tag.value):
             await interaction.response.send_message(
-                "Du hast dafür keine Rechte.",
+                "Dieses Zeitfenster wurde nicht gefunden.",
                 ephemeral=True,
-                delete_after=5,
+                delete_after=8,
             )
             return
 
+        await interaction.response.send_modal(
+            UhrzeitBearbeitenModal(tag.value, zeit)
+        )
+
+    @app_commands.command(
+        name="uhrzeit_loeschen",
+        description="Admin: Löscht ein leeres Zeitfenster",
+    )
+    @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
+    @app_commands.autocomplete(zeit=zeit_autocomplete)
+    async def uhrzeit_loeschen(
+        self,
+        interaction: discord.Interaction,
+        tag: app_commands.Choice[str],
+        zeit: str,
+    ) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
+            return
+
+        tag_name = tag.value
+        zeit = zeit.strip()
+
+        if zeit not in aktive_zeiten(tag_name):
+            await interaction.response.send_message(
+                "Dieses Zeitfenster wurde nicht gefunden.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        if ini_listen.get(tag_name, {}).get(zeit):
+            await interaction.response.send_message(
+                "Dieses Zeitfenster kann nicht gelöscht werden, solange dort Anmeldungen vorhanden sind.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        zeiten_pro_tag[tag_name].remove(zeit)
+        ini_listen.get(tag_name, {}).pop(zeit, None)
+        speichere_daten()
+
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        await update_ini_message(tag_name)
+        await interaction.followup.send(
+            f"**{zeit}** wurde für **{tag_name}** gelöscht.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="uhrzeiten_anzeigen",
+        description="Zeigt alle Zeitfenster eines Tages",
+    )
+    @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
+    async def uhrzeiten_anzeigen(
+        self,
+        interaction: discord.Interaction,
+        tag: app_commands.Choice[str],
+    ) -> None:
+        zeiten = aktive_zeiten(tag.value)
+        inhalt = "\n".join(
+            f"**{index}.** {zeit}"
+            for index, zeit in enumerate(zeiten, start=1)
+        ) or "*Keine Uhrzeiten festgelegt.*"
+
         await interaction.response.send_message(
-            f"Wähle alle Zeitfenster aus, die am **{tag.value}** verfügbar sein sollen. "
-            "Bereits aktive Zeiten sind markiert.",
-            view=AdminZeitfensterView(tag.value),
+            f"## Ini-Uhrzeiten für {tag.value}\n{inhalt}",
             ephemeral=True,
         )
 

@@ -2,25 +2,46 @@
 
 ## Railway
 
-1. Repository mit diesen Dateien hochladen.
-2. Railway Variable setzen:
+1. Dateien in dein GitHub-Repository hochladen.
+2. Railway-Variable setzen:
    - `DISCORD_TOKEN`
-3. Railway Volume anlegen:
+3. Railway Volume einrichten:
    - Mount Path: `/app/data`
-4. Deploy starten.
+4. Neu deployen.
 
-## Neue Uhrzeit-Verwaltung
+## Freie Ini-Uhrzeiten pro Tag
 
-Admin-Befehl:
+### Hinzufügen
+`/ini uhrzeit_hinzufuegen`
 
-`/ini uhrzeiten_festlegen`
+Tag auswählen, danach im Modal Start- und Endzeit im Format `HH:MM` eintragen.
 
-Danach:
-1. Wochentag auswählen.
-2. Gewünschte Ein-Stunden-Zeitfenster markieren.
-3. Auswahl speichern.
+Beispiel:
+- Start: `19:15`
+- Ende: `20:45`
 
-Member sehen anschließend nur die für diesen Tag freigegebenen Uhrzeiten.
+### Bearbeiten
+`/ini uhrzeit_bearbeiten`
 
-Hinweis:
-Eine Uhrzeit kann nicht entfernt werden, solange dort noch Anmeldungen vorhanden sind.
+Tag und vorhandenes Zeitfenster auswählen. Danach neue Start- und Endzeit eintragen.
+
+Vorhandene Anmeldungen werden beim Bearbeiten automatisch in das neue Zeitfenster übernommen.
+
+### Löschen
+`/ini uhrzeit_loeschen`
+
+Ein Zeitfenster kann nur gelöscht werden, wenn dort keine Anmeldungen vorhanden sind.
+
+### Anzeigen
+`/ini uhrzeiten_anzeigen`
+
+Zeigt alle konfigurierten Zeitfenster des ausgewählten Tages.
+
+## Regeln
+
+- Jeder Wochentag hat eigene Zeitfenster.
+- Stunde und Minute sind frei wählbar.
+- Format: `HH:MM`
+- Zeitfenster dürfen sich nicht überschneiden.
+- Über-Nacht-Zeiten wie `22:30 - 00:30` sind erlaubt.
+- Maximal 25 Zeitfenster pro Tag, da Discord-Dropdowns höchstens 25 Optionen unterstützen.
