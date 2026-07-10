@@ -318,17 +318,6 @@ def zeitfenster_ueberschneiden(a: str, b: str) -> bool:
     return False
 
 
-def zeitfenster_hat_ueberschneidung(
-    tag: str,
-    neues_zeitfenster: str,
-    ignorieren: str | None = None,
-) -> bool:
-    for vorhandenes in aktive_zeiten(tag):
-        if ignorieren is not None and vorhandenes == ignorieren:
-            continue
-        if zeitfenster_ueberschneiden(vorhandenes, neues_zeitfenster):
-            return True
-    return False
 
 
 def sortiere_zeiten(tag: str) -> None:
@@ -787,15 +776,6 @@ class UhrzeitHinzufuegenModal(discord.ui.Modal):
                 delete_after=8,
             )
             return
-
-        if zeitfenster_hat_ueberschneidung(self.tag, zeitfenster):
-            await interaction.response.send_message(
-                "Dieses Zeitfenster überschneidet sich mit einer bereits vorhandenen Uhrzeit.",
-                ephemeral=True,
-                delete_after=10,
-            )
-            return
-
         zeiten_pro_tag.setdefault(self.tag, []).append(zeitfenster)
         sortiere_zeiten(self.tag)
         ini_listen.setdefault(self.tag, {})[zeitfenster] = []
@@ -868,19 +848,6 @@ class UhrzeitBearbeitenModal(discord.ui.Modal):
                 delete_after=8,
             )
             return
-
-        if zeitfenster_hat_ueberschneidung(
-            self.tag,
-            neues_zeitfenster,
-            ignorieren=self.alte_zeit,
-        ):
-            await interaction.response.send_message(
-                "Das neue Zeitfenster überschneidet sich mit einer anderen Uhrzeit.",
-                ephemeral=True,
-                delete_after=10,
-            )
-            return
-
         index = zeiten_pro_tag[self.tag].index(self.alte_zeit)
         zeiten_pro_tag[self.tag][index] = neues_zeitfenster
         sortiere_zeiten(self.tag)

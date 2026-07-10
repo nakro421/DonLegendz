@@ -42,6 +42,10 @@ Zeigt alle konfigurierten Zeitfenster des ausgewählten Tages.
 - Jeder Wochentag hat eigene Zeitfenster.
 - Stunde und Minute sind frei wählbar.
 - Format: `HH:MM`
-- Zeitfenster dürfen sich nicht überschneiden.
+- Zeitfenster dürfen sich überschneiden.
 - Über-Nacht-Zeiten wie `22:30 - 00:30` sind erlaubt.
 - Maximal 25 Zeitfenster pro Tag, da Discord-Dropdowns höchstens 25 Optionen unterstützen.
+
+## Überschneidungen
+
+Überschneidende Zeitfenster sind ausdrücklich erlaubt.
