@@ -1,19 +1,26 @@
-# DonLegendz Discord Bot
+# Fiesta Online Discord Bot
 
 ## Railway
-Variables:
-- DISCORD_TOKEN=dein_bot_token
 
-Volume:
-- Mount Path: /app/data
+1. Repository mit diesen Dateien hochladen.
+2. Railway Variable setzen:
+   - `DISCORD_TOKEN`
+3. Railway Volume anlegen:
+   - Mount Path: `/app/data`
+4. Deploy starten.
 
-Start:
-- Railway nutzt Procfile: worker: python main.py
+## Neue Uhrzeit-Verwaltung
 
-## Enthalten
-- Ini-Anmeldesystem mit persistentem JSON-Speicher
-- Modernere Ini-Embeds und Buttons
-- Abmelden mit gezielter Uhrzeit-Auswahl
-- Bewerbungssystem 2.0
-- Anonyme Ja/Nein-Abstimmungen mit min. 200 Zeichen Begründung
-- Admin-Auswertung im Admin-Abstimmungschannel
+Admin-Befehl:
+
+`/ini uhrzeiten_festlegen`
+
+Danach:
+1. Wochentag auswählen.
+2. Gewünschte Ein-Stunden-Zeitfenster markieren.
+3. Auswahl speichern.
+
+Member sehen anschließend nur die für diesen Tag freigegebenen Uhrzeiten.
+
+Hinweis:
+Eine Uhrzeit kann nicht entfernt werden, solange dort noch Anmeldungen vorhanden sind.

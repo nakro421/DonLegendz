@@ -39,29 +39,96 @@ INI_CHANNELS = {
 ADMIN_ROLE_NAME = "Admin"
 INI_ROLE_NAME = "Freund der Ini"
 
-ALLE_STUNDEN = [f"{stunde:02d}:00" for stunde in range(24)]
-
-# Standardauswahl beim ersten Start. Danach wird die Auswahl dauerhaft
-# aus /app/data/fiesta_data.json geladen.
-STANDARD_ZEITEN = [
-    "09:00",
-    "11:00",
-    "13:00",
-    "15:00",
-    "18:00",
-    "20:00",
-    "22:00",
-    "00:00",
+ALLE_ZEITFENSTER = [
+    f"{stunde:02d}:00 - {(stunde + 1) % 24:02d}:00"
+    for stunde in range(24)
 ]
 
-ZEITEN: list[str] = STANDARD_ZEITEN.copy()
+STANDARD_ZEITEN_PRO_TAG = {
+    "Montag": [
+        "09:00 - 10:00",
+        "11:00 - 12:00",
+        "13:00 - 14:00",
+        "15:00 - 16:00",
+        "18:00 - 19:00",
+        "20:00 - 21:00",
+        "22:00 - 23:00",
+        "00:00 - 01:00",
+    ],
+    "Dienstag": [
+        "09:00 - 10:00",
+        "11:00 - 12:00",
+        "13:00 - 14:00",
+        "15:00 - 16:00",
+        "18:00 - 19:00",
+        "20:00 - 21:00",
+        "22:00 - 23:00",
+        "00:00 - 01:00",
+    ],
+    "Mittwoch": [
+        "09:00 - 10:00",
+        "11:00 - 12:00",
+        "13:00 - 14:00",
+        "15:00 - 16:00",
+        "18:00 - 19:00",
+        "20:00 - 21:00",
+        "22:00 - 23:00",
+        "00:00 - 01:00",
+    ],
+    "Donnerstag": [
+        "09:00 - 10:00",
+        "11:00 - 12:00",
+        "13:00 - 14:00",
+        "15:00 - 16:00",
+        "18:00 - 19:00",
+        "20:00 - 21:00",
+        "22:00 - 23:00",
+        "00:00 - 01:00",
+    ],
+    "Freitag": [
+        "09:00 - 10:00",
+        "11:00 - 12:00",
+        "13:00 - 14:00",
+        "15:00 - 16:00",
+        "18:00 - 19:00",
+        "20:00 - 21:00",
+        "22:00 - 23:00",
+        "00:00 - 01:00",
+    ],
+    "Samstag": [
+        "09:00 - 10:00",
+        "11:00 - 12:00",
+        "13:00 - 14:00",
+        "15:00 - 16:00",
+        "18:00 - 19:00",
+        "20:00 - 21:00",
+        "22:00 - 23:00",
+        "00:00 - 01:00",
+    ],
+    "Sonntag": [
+        "09:00 - 10:00",
+        "11:00 - 12:00",
+        "13:00 - 14:00",
+        "15:00 - 16:00",
+        "18:00 - 19:00",
+        "20:00 - 21:00",
+        "22:00 - 23:00",
+        "00:00 - 01:00",
+    ],
+}
 
 TAGE = list(INI_CHANNELS.keys())
+
+# Pro Wochentag separat festgelegte, aktive Ini-Zeitfenster.
+zeiten_pro_tag: dict[str, list[str]] = {
+    tag: list(STANDARD_ZEITEN_PRO_TAG.get(tag, []))
+    for tag in TAGE
+}
 
 # Gleiche Namen dürfen in unterschiedlichen Uhrzeiten mehrfach stehen.
 # Nur im selben Zeitfenster wird ein doppelter Name blockiert.
 ini_listen: dict[str, dict[str, list[dict]]] = {
-    tag: {zeit: [] for zeit in ZEITEN}
+    tag: {zeit: [] for zeit in zeiten_pro_tag[tag]}
     for tag in TAGE
 }
 
@@ -76,11 +143,14 @@ bewerbungen: dict = {
 
 
 def leere_ini_listen() -> dict[str, dict[str, list[dict]]]:
-    return {tag: {zeit: [] for zeit in ZEITEN} for tag in TAGE}
+    return {
+        tag: {zeit: [] for zeit in zeiten_pro_tag.get(tag, [])}
+        for tag in TAGE
+    }
 
 
 def normalisiere_ini_daten(rohdaten: object) -> dict[str, dict[str, list[dict]]]:
-    """Sorgt dafür, dass neue Tage/Zeiten nach Code-Updates sauber angelegt werden."""
+    """Lädt nur gültige Ini-Einträge und bewahrt belegte alte Zeitfenster."""
     neue_daten = leere_ini_listen()
 
     if not isinstance(rohdaten, dict):
@@ -91,9 +161,21 @@ def normalisiere_ini_daten(rohdaten: object) -> dict[str, dict[str, list[dict]]]
         if not isinstance(tag_daten, dict):
             continue
 
-        for zeit in ZEITEN:
+        for zeit in zeiten_pro_tag.get(tag, []):
             eintraege = tag_daten.get(zeit, [])
             if isinstance(eintraege, list):
+                neue_daten[tag][zeit] = [
+                    eintrag for eintrag in eintraege
+                    if isinstance(eintrag, dict) and "fiesta" in eintrag
+                ]
+
+        # Alte, belegte Zeitfenster nicht verlieren.
+        for zeit, eintraege in tag_daten.items():
+            if (
+                zeit not in neue_daten[tag]
+                and isinstance(eintraege, list)
+                and eintraege
+            ):
                 neue_daten[tag][zeit] = [
                     eintrag for eintrag in eintraege
                     if isinstance(eintrag, dict) and "fiesta" in eintrag
@@ -139,10 +221,13 @@ def normalisiere_bewerbungsdaten(rohdaten: object) -> dict:
 
 def lade_daten() -> None:
     """Lädt gespeicherte Daten aus dem Railway Volume."""
-    global ini_listen, bewerbungen, ZEITEN
+    global ini_listen, bewerbungen, zeiten_pro_tag
 
     if not DATA_FILE.exists():
-        ZEITEN = STANDARD_ZEITEN.copy()
+        zeiten_pro_tag = {
+            tag: list(STANDARD_ZEITEN_PRO_TAG.get(tag, []))
+            for tag in TAGE
+        }
         ini_listen = leere_ini_listen()
         speichere_daten()
         print(f"Neue Datendatei erstellt: {DATA_FILE}")
@@ -153,21 +238,32 @@ def lade_daten() -> None:
             daten = json.load(file)
     except Exception as fehler:
         print(f"Konnte Datendatei nicht laden: {fehler}")
-        ZEITEN = STANDARD_ZEITEN.copy()
+        zeiten_pro_tag = {
+            tag: list(STANDARD_ZEITEN_PRO_TAG.get(tag, []))
+            for tag in TAGE
+        }
         ini_listen = leere_ini_listen()
         return
 
     settings = daten.get("settings", {})
-    gespeicherte_zeiten = settings.get("ini_times", []) if isinstance(settings, dict) else []
+    gespeicherte_zeiten = settings.get("zeiten_pro_tag", {}) if isinstance(settings, dict) else {}
 
-    if isinstance(gespeicherte_zeiten, list):
-        ZEITEN = [
-            zeit for zeit in ALLE_STUNDEN
-            if zeit in gespeicherte_zeiten
-        ] or STANDARD_ZEITEN.copy()
-    else:
-        ZEITEN = STANDARD_ZEITEN.copy()
+    neue_zeiten_pro_tag: dict[str, list[str]] = {}
+    for tag in TAGE:
+        rohe_zeiten = gespeicherte_zeiten.get(tag, []) if isinstance(gespeicherte_zeiten, dict) else []
+        if isinstance(rohe_zeiten, list):
+            gueltige_zeiten = [
+                zeit for zeit in ALLE_ZEITFENSTER
+                if zeit in rohe_zeiten
+            ]
+        else:
+            gueltige_zeiten = []
 
+        neue_zeiten_pro_tag[tag] = gueltige_zeiten or list(
+            STANDARD_ZEITEN_PRO_TAG.get(tag, [])
+        )
+
+    zeiten_pro_tag = neue_zeiten_pro_tag
     ini_listen = normalisiere_ini_daten(daten.get("ini", {}))
     bewerbungen = normalisiere_bewerbungsdaten(daten.get("bewerbungen", {}))
     print(f"Daten geladen: {DATA_FILE}")
@@ -184,7 +280,7 @@ def speichere_daten() -> None:
         "bewerbungen": bewerbungen,
         "klassen": {},
         "settings": {
-            "ini_times": ZEITEN,
+            "zeiten_pro_tag": zeiten_pro_tag,
         },
     }
 
@@ -215,14 +311,27 @@ def hat_ini_rolle(member: discord.Member) -> bool:
     return ist_admin(member) or any(role.name == INI_ROLE_NAME for role in member.roles)
 
 
+def aktive_zeiten(tag: str) -> list[str]:
+    return list(zeiten_pro_tag.get(tag, []))
+
+
 async def zeit_autocomplete(
     interaction: discord.Interaction,
     current: str,
 ) -> list[app_commands.Choice[str]]:
+    tag_name = None
+    namespace = getattr(interaction, "namespace", None)
+    tag_value = getattr(namespace, "tag", None) if namespace else None
+
+    if isinstance(tag_value, str):
+        tag_name = tag_value
+
+    kandidaten = aktive_zeiten(tag_name) if tag_name in TAGE else []
     current = current.strip().lower()
+
     return [
         app_commands.Choice(name=zeit, value=zeit)
-        for zeit in ZEITEN
+        for zeit in kandidaten
         if current in zeit.lower()
     ][:25]
 
@@ -242,7 +351,10 @@ def fiesta_name_existiert_in_zeit(tag: str, zeit: str, fiesta_name: str, ignore_
 
 
 def gesamt_teilnehmer(tag: str) -> int:
-    return sum(len(ini_listen[tag][zeit]) for zeit in ZEITEN)
+    return sum(
+        len(ini_listen.get(tag, {}).get(zeit, []))
+        for zeit in aktive_zeiten(tag)
+    )
 
 
 def klassen_emoji(fiesta_name: str) -> str:
@@ -267,7 +379,7 @@ def klassen_emoji(fiesta_name: str) -> str:
 
 
 def finde_eintrag_nach_fiesta(tag: str, fiesta_name: str):
-    for zeit in ZEITEN:
+    for zeit in aktive_zeiten(tag):
         for index, eintrag in enumerate(ini_listen[tag][zeit]):
             if eintrag["fiesta"].lower() == fiesta_name.lower():
                 return zeit, index, eintrag
@@ -276,7 +388,7 @@ def finde_eintrag_nach_fiesta(tag: str, fiesta_name: str):
 
 def finde_alle_eintraege_nach_fiesta(tag: str, fiesta_name: str) -> list[tuple[str, int, dict]]:
     treffer = []
-    for zeit in ZEITEN:
+    for zeit in aktive_zeiten(tag):
         for index, eintrag in enumerate(ini_listen[tag][zeit]):
             if eintrag["fiesta"].lower() == fiesta_name.lower():
                 treffer.append((zeit, index, eintrag))
@@ -286,8 +398,16 @@ def finde_alle_eintraege_nach_fiesta(tag: str, fiesta_name: str) -> list[tuple[s
 def alte_liste_als_text(tag: str) -> str:
     teile = []
 
-    for zeit in ZEITEN:
-        daten = ini_listen[tag][zeit]
+    zeiten = aktive_zeiten(tag)
+    if not zeiten:
+        embed.add_field(
+            name="⛔ Keine Uhrzeiten freigegeben",
+            value="Ein Admin muss zuerst mit `/ini uhrzeiten_festlegen` Uhrzeiten auswählen.",
+            inline=False,
+        )
+
+    for zeit in zeiten:
+        daten = ini_listen.get(tag, {}).get(zeit, [])
 
         if daten:
             namen = "\n".join(
@@ -316,8 +436,16 @@ def ini_embed(tag: str) -> discord.Embed:
         timestamp=datetime.now(),
     )
 
-    for zeit in ZEITEN:
-        daten = ini_listen[tag][zeit]
+    zeiten = aktive_zeiten(tag)
+    if not zeiten:
+        embed.add_field(
+            name="⛔ Keine Uhrzeiten freigegeben",
+            value="Ein Admin muss zuerst mit `/ini uhrzeiten_festlegen` Uhrzeiten auswählen.",
+            inline=False,
+        )
+
+    for zeit in zeiten:
+        daten = ini_listen.get(tag, {}).get(zeit, [])
         anzahl = len(daten)
 
         if daten:
@@ -621,7 +749,7 @@ class AbmeldenZeitSelect(discord.ui.Select):
 
         zeit = self.values[0]
         index_gefunden = None
-        for index, eintrag in enumerate(ini_listen[self.tag].get(zeit, [])):
+        for index, eintrag in enumerate(ini_listen.get(self.tag, {}).get(zeit, [])):
             if eintrag["fiesta"].lower() == self.fiesta_name.lower():
                 index_gefunden = index
                 break
@@ -663,15 +791,27 @@ class AbmeldenZeitView(discord.ui.View):
 class IniZeitSelect(discord.ui.Select):
     def __init__(self, tag: str):
         self.tag = tag
+        optionen = [
+            discord.SelectOption(label=zeit, value=zeit, emoji="🕒")
+            for zeit in aktive_zeiten(tag)
+        ]
+
+        if not optionen:
+            optionen = [
+                discord.SelectOption(
+                    label="Keine Uhrzeiten freigegeben",
+                    value="__keine__",
+                    emoji="⛔",
+                )
+            ]
+
         super().__init__(
             placeholder="Ini-Uhrzeit auswählen",
             min_values=1,
             max_values=1,
-            options=[
-                discord.SelectOption(label=zeit, value=zeit, emoji="🕒")
-                for zeit in ZEITEN
-            ],
+            options=optionen,
             custom_id=f"ini_anmelden_zeit_{tag}",
+            disabled=not aktive_zeiten(tag),
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -684,9 +824,9 @@ class IniZeitSelect(discord.ui.Select):
             return
 
         zeit = self.values[0]
-        if zeit not in ZEITEN:
+        if zeit not in aktive_zeiten(self.tag):
             await interaction.response.send_message(
-                "Diese Uhrzeit ist nicht mehr aktiv.",
+                "Diese Uhrzeit ist für diesen Tag nicht mehr aktiv.",
                 ephemeral=True,
                 delete_after=8,
             )
@@ -695,28 +835,30 @@ class IniZeitSelect(discord.ui.Select):
         await interaction.response.send_modal(AnmeldungModal(self.tag, zeit))
 
 
-class AdminUhrzeitenSelect(discord.ui.Select):
-    def __init__(self):
+class AdminZeitfensterSelect(discord.ui.Select):
+    def __init__(self, tag: str):
+        self.tag = tag
+        aktive = set(aktive_zeiten(tag))
+
         options = [
             discord.SelectOption(
                 label=zeit,
                 value=zeit,
                 emoji="🕒",
-                default=zeit in ZEITEN,
+                default=zeit in aktive,
             )
-            for zeit in ALLE_STUNDEN
+            for zeit in ALLE_ZEITFENSTER
         ]
+
         super().__init__(
-            placeholder="Alle Ini-Uhrzeiten auswählen",
+            placeholder=f"Uhrzeiten für {tag} auswählen",
             min_values=1,
             max_values=24,
             options=options,
-            custom_id="ini_admin_uhrzeiten_select",
+            custom_id=f"ini_admin_zeiten_{tag}",
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        global ZEITEN
-
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
             await interaction.response.send_message(
                 "Du hast dafür keine Rechte.",
@@ -725,59 +867,65 @@ class AdminUhrzeitenSelect(discord.ui.Select):
             )
             return
 
-        alte_zeiten = ZEITEN.copy()
-        neue_zeiten = [zeit for zeit in ALLE_STUNDEN if zeit in self.values]
-
-        entfernte_zeiten = [zeit for zeit in alte_zeiten if zeit not in neue_zeiten]
-        belegte_entfernte_zeiten = [
-            zeit
-            for zeit in entfernte_zeiten
-            if any(ini_listen.get(tag, {}).get(zeit) for tag in TAGE)
+        neue_zeiten = [
+            zeit for zeit in ALLE_ZEITFENSTER
+            if zeit in self.values
+        ]
+        alte_zeiten = aktive_zeiten(self.tag)
+        entfernte_zeiten = [
+            zeit for zeit in alte_zeiten
+            if zeit not in neue_zeiten
         ]
 
-        if belegte_entfernte_zeiten:
+        belegte_entfernte = [
+            zeit for zeit in entfernte_zeiten
+            if ini_listen.get(self.tag, {}).get(zeit)
+        ]
+
+        if belegte_entfernte:
             await interaction.response.send_message(
-                "Diese Uhrzeiten können noch nicht entfernt werden, weil dort "
-                "Anmeldungen vorhanden sind:\n"
-                + ", ".join(f"**{zeit}**" for zeit in belegte_entfernte_zeiten),
+                "Folgende Uhrzeiten können nicht entfernt werden, weil dort "
+                "noch Anmeldungen vorhanden sind:\n"
+                + "\n".join(f"• **{zeit}**" for zeit in belegte_entfernte),
                 ephemeral=True,
                 delete_after=15,
             )
             return
 
-        ZEITEN = neue_zeiten
+        zeiten_pro_tag[self.tag] = neue_zeiten
+        ini_listen.setdefault(self.tag, {})
 
-        for tag in TAGE:
-            ini_listen.setdefault(tag, {})
-            for zeit in ZEITEN:
-                ini_listen[tag].setdefault(zeit, [])
-            for zeit in entfernte_zeiten:
-                ini_listen[tag].pop(zeit, None)
+        for zeit in neue_zeiten:
+            ini_listen[self.tag].setdefault(zeit, [])
+
+        for zeit in entfernte_zeiten:
+            ini_listen[self.tag].pop(zeit, None)
 
         speichere_daten()
 
         await interaction.response.defer(ephemeral=True, thinking=False)
-        await aktualisiere_alle_ini_nachrichten()
+        await update_ini_message(self.tag)
         await interaction.followup.send(
-            "Die Ini-Uhrzeiten wurden gespeichert:\n"
-            + ", ".join(f"**{zeit}**" for zeit in ZEITEN),
+            f"Die Uhrzeiten für **{self.tag}** wurden gespeichert:\n"
+            + "\n".join(f"• {zeit}" for zeit in neue_zeiten),
             ephemeral=True,
         )
 
         if interaction.guild:
             await log_senden(
                 interaction.guild,
-                "🕒 Ini-Uhrzeiten geändert",
+                f"🕒 Ini-Uhrzeiten geändert - {self.tag}",
                 f"**Admin:** {interaction.user.mention}\n"
-                f"**Aktive Uhrzeiten:** {', '.join(ZEITEN)}",
+                f"**Aktive Uhrzeiten:**\n"
+                + "\n".join(f"• {zeit}" for zeit in neue_zeiten),
                 discord.Color.dark_blue(),
             )
 
 
-class AdminUhrzeitenView(discord.ui.View):
-    def __init__(self):
+class AdminZeitfensterView(discord.ui.View):
+    def __init__(self, tag: str):
         super().__init__(timeout=180)
-        self.add_item(AdminUhrzeitenSelect())
+        self.add_item(AdminZeitfensterSelect(tag))
 
 
 class IniView(discord.ui.View):
@@ -840,7 +988,7 @@ class IniView(discord.ui.View):
         anzahl = gesamt_teilnehmer(self.tag)
         reset_liste = alte_liste_als_text(self.tag)
 
-        for zeit in ZEITEN:
+        for zeit in aktive_zeiten(self.tag):
             ini_listen[self.tag][zeit].clear()
         speichere_daten()
 
@@ -1402,9 +1550,9 @@ class IniCommands(app_commands.Group):
         zeit_name = zeit.strip()
         fiesta_name = fiesta_name.strip()
 
-        if zeit_name not in ZEITEN:
+        if zeit_name not in aktive_zeiten(tag_name):
             await interaction.response.send_message(
-                "Diese Ini-Uhrzeit ist nicht aktiv.",
+                "Diese Uhrzeit ist für diesen Tag nicht aktiv.",
                 ephemeral=True,
                 delete_after=5,
             )
@@ -1471,7 +1619,7 @@ class IniCommands(app_commands.Group):
 
         if zeit_name not in ini_listen.get(tag_name, {}):
             await interaction.response.send_message(
-                "Diese Ini-Uhrzeit wurde nicht gefunden.",
+                "Diese Uhrzeit wurde für diesen Tag nicht gefunden.",
                 ephemeral=True,
                 delete_after=5,
             )
@@ -1524,7 +1672,7 @@ class IniCommands(app_commands.Group):
         anzahl = gesamt_teilnehmer(tag_name)
         reset_liste = alte_liste_als_text(tag_name)
 
-        for zeit in ZEITEN:
+        for zeit in aktive_zeiten(tag_name):
             ini_listen[tag_name][zeit].clear()
         speichere_daten()
 
@@ -1548,9 +1696,14 @@ class IniCommands(app_commands.Group):
 
     @app_commands.command(
         name="uhrzeiten_festlegen",
-        description="Admin: Wählt die Ini-Uhrzeiten aus allen 24 Stunden aus",
+        description="Admin: Legt die verfügbaren Ini-Uhrzeiten für einen Tag fest",
     )
-    async def uhrzeiten_festlegen(self, interaction: discord.Interaction) -> None:
+    @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
+    async def uhrzeiten_festlegen(
+        self,
+        interaction: discord.Interaction,
+        tag: app_commands.Choice[str],
+    ) -> None:
         if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
             await interaction.response.send_message(
                 "Du hast dafür keine Rechte.",
@@ -1560,9 +1713,9 @@ class IniCommands(app_commands.Group):
             return
 
         await interaction.response.send_message(
-            "Wähle alle Stunden aus, zu denen eine Ini stattfinden kann. "
-            "Bereits aktive Uhrzeiten sind markiert.",
-            view=AdminUhrzeitenView(),
+            f"Wähle alle Zeitfenster aus, die am **{tag.value}** verfügbar sein sollen. "
+            "Bereits aktive Zeiten sind markiert.",
+            view=AdminZeitfensterView(tag.value),
             ephemeral=True,
         )
 
