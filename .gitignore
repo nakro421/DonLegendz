@@ -1,4 +1,4 @@
-.env
-.env.txt
 __pycache__/
 *.pyc
+.env
+fiesta_data.json

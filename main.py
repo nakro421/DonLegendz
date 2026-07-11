@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import discord
 from discord import app_commands
@@ -24,6 +24,13 @@ DATA_FILE = Path(os.getenv("DATA_FILE", "/app/data/fiesta_data.json"))
 BEWERBUNG_CHANNEL_ID = 1523646727461146624
 ADMIN_ABSTIMMUNG_CHANNEL_ID = 1523646973524312164
 MIN_BEWERBUNG_BEGRUENDUNG = 200
+
+# Privates Frage-/Support-System
+# Railway Variables:
+# SUPPORT_PANEL_CHANNEL_ID = öffentlicher Channel mit dem "Frage stellen"-Button
+# SUPPORT_CATEGORY_ID = Kategorie, in der private Support-Channels erstellt werden
+SUPPORT_PANEL_CHANNEL_ID = int(os.getenv("SUPPORT_PANEL_CHANNEL_ID", "0"))
+SUPPORT_CATEGORY_ID = int(os.getenv("SUPPORT_CATEGORY_ID", "0"))
 
 
 INI_CHANNELS = {
@@ -74,6 +81,12 @@ ini_message_cache: dict[str, int] = {}
 bewerbungen: dict = {
     "applications": {},
     "panel_to_application": {},
+}
+
+support_daten: dict = {
+    "tickets": {},
+    "panel_message_id": None,
+    "next_number": 1,
 }
 
 
@@ -154,9 +167,41 @@ def normalisiere_bewerbungsdaten(rohdaten: object) -> dict:
     return daten
 
 
+def leere_support_daten() -> dict:
+    return {
+        "tickets": {},
+        "panel_message_id": None,
+        "next_number": 1,
+    }
+
+
+def normalisiere_support_daten(rohdaten: object) -> dict:
+    daten = leere_support_daten()
+
+    if not isinstance(rohdaten, dict):
+        return daten
+
+    tickets = rohdaten.get("tickets", {})
+    if isinstance(tickets, dict):
+        for channel_id, ticket in tickets.items():
+            if isinstance(ticket, dict):
+                daten["tickets"][str(channel_id)] = ticket
+
+    panel_message_id = rohdaten.get("panel_message_id")
+    if panel_message_id:
+        daten["panel_message_id"] = int(panel_message_id)
+
+    try:
+        daten["next_number"] = max(1, int(rohdaten.get("next_number", 1)))
+    except (TypeError, ValueError):
+        daten["next_number"] = 1
+
+    return daten
+
+
 def lade_daten() -> None:
     """Lädt gespeicherte Daten aus dem Railway Volume."""
-    global ini_listen, bewerbungen, zeiten_pro_tag
+    global ini_listen, bewerbungen, zeiten_pro_tag, support_daten
 
     if not DATA_FILE.exists():
         zeiten_pro_tag = {
@@ -164,6 +209,7 @@ def lade_daten() -> None:
             for tag in TAGE
         }
         ini_listen = leere_ini_listen()
+        support_daten = leere_support_daten()
         speichere_daten()
         print(f"Neue Datendatei erstellt: {DATA_FILE}")
         return
@@ -178,6 +224,7 @@ def lade_daten() -> None:
             for tag in TAGE
         }
         ini_listen = leere_ini_listen()
+        support_daten = leere_support_daten()
         return
 
     settings = daten.get("settings", {})
@@ -218,6 +265,7 @@ def lade_daten() -> None:
 
     ini_listen = normalisiere_ini_daten(daten.get("ini", {}))
     bewerbungen = normalisiere_bewerbungsdaten(daten.get("bewerbungen", {}))
+    support_daten = normalisiere_support_daten(daten.get("support", {}))
     print(f"Daten geladen: {DATA_FILE}")
 
 
@@ -230,6 +278,7 @@ def speichere_daten() -> None:
         "saved_at": datetime.now().isoformat(timespec="seconds"),
         "ini": ini_listen,
         "bewerbungen": bewerbungen,
+        "support": support_daten,
         "klassen": {},
         "settings": {
             "zeiten_pro_tag": zeiten_pro_tag,
@@ -318,6 +367,17 @@ def zeitfenster_ueberschneiden(a: str, b: str) -> bool:
     return False
 
 
+def zeitfenster_hat_ueberschneidung(
+    tag: str,
+    neues_zeitfenster: str,
+    ignorieren: str | None = None,
+) -> bool:
+    for vorhandenes in aktive_zeiten(tag):
+        if ignorieren is not None and vorhandenes == ignorieren:
+            continue
+        if zeitfenster_ueberschneiden(vorhandenes, neues_zeitfenster):
+            return True
+    return False
 
 
 def sortiere_zeiten(tag: str) -> None:
@@ -776,6 +836,15 @@ class UhrzeitHinzufuegenModal(discord.ui.Modal):
                 delete_after=8,
             )
             return
+
+        if zeitfenster_hat_ueberschneidung(self.tag, zeitfenster):
+            await interaction.response.send_message(
+                "Dieses Zeitfenster überschneidet sich mit einer bereits vorhandenen Uhrzeit.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
         zeiten_pro_tag.setdefault(self.tag, []).append(zeitfenster)
         sortiere_zeiten(self.tag)
         ini_listen.setdefault(self.tag, {})[zeitfenster] = []
@@ -848,6 +917,19 @@ class UhrzeitBearbeitenModal(discord.ui.Modal):
                 delete_after=8,
             )
             return
+
+        if zeitfenster_hat_ueberschneidung(
+            self.tag,
+            neues_zeitfenster,
+            ignorieren=self.alte_zeit,
+        ):
+            await interaction.response.send_message(
+                "Das neue Zeitfenster überschneidet sich mit einer anderen Uhrzeit.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
         index = zeiten_pro_tag[self.tag].index(self.alte_zeit)
         zeiten_pro_tag[self.tag][index] = neues_zeitfenster
         sortiere_zeiten(self.tag)
@@ -1063,6 +1145,599 @@ class IniView(discord.ui.View):
                 discord.Color.dark_blue(),
             )
 
+
+
+
+# =========================
+# PRIVATES FRAGE-/SUPPORT-SYSTEM
+# =========================
+
+def support_ticket_fuer_channel(channel_id: int) -> dict | None:
+    ticket = support_daten.get("tickets", {}).get(str(channel_id))
+    return ticket if isinstance(ticket, dict) else None
+
+
+async def get_support_panel_channel() -> discord.TextChannel | None:
+    if SUPPORT_PANEL_CHANNEL_ID <= 0:
+        return None
+
+    channel = bot.get_channel(SUPPORT_PANEL_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(SUPPORT_PANEL_CHANNEL_ID)
+        except Exception:
+            return None
+
+    return channel if isinstance(channel, discord.TextChannel) else None
+
+
+async def get_support_category(guild: discord.Guild) -> discord.CategoryChannel | None:
+    if SUPPORT_CATEGORY_ID <= 0:
+        return None
+
+    channel = guild.get_channel(SUPPORT_CATEGORY_ID)
+    if channel is None:
+        try:
+            channel = await guild.fetch_channel(SUPPORT_CATEGORY_ID)
+        except Exception:
+            return None
+
+    return channel if isinstance(channel, discord.CategoryChannel) else None
+
+
+def support_panel_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="❓ Fragen an das Team",
+        description=(
+            "Du hast eine Frage und möchtest dafür keine private Nachricht "
+            "an eine einzelne Person senden?\n\n"
+            "Klicke auf **📩 Frage stellen**. Der Bot erstellt anschließend "
+            "einen privaten Bereich, den nur du und das Admin-Team sehen können."
+        ),
+        color=discord.Color.from_rgb(88, 101, 242),
+        timestamp=datetime.now(),
+    )
+    embed.add_field(
+        name="🔒 Privat",
+        value="Andere Mitglieder können weder deine Frage noch die Antworten sehen.",
+        inline=False,
+    )
+    embed.add_field(
+        name="💬 Antworten",
+        value="Admins antworten direkt im privaten Support-Channel. Du siehst die Antwort sofort.",
+        inline=False,
+    )
+    embed.set_footer(text="Bitte erstelle für jedes Thema nur eine Anfrage.")
+    return embed
+
+
+def support_ticket_embed(
+    *,
+    member: discord.Member,
+    betreff: str,
+    frage: str,
+    nummer: int,
+) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"📩 Support-Anfrage #{nummer:04d}",
+        description=frage,
+        color=discord.Color.green(),
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="👤 Erstellt von", value=member.mention, inline=True)
+    embed.add_field(name="📌 Betreff", value=betreff, inline=True)
+    embed.add_field(name="Status", value="🟢 Offen", inline=True)
+    embed.set_footer(text=f"User-ID: {member.id}")
+    return embed
+
+
+async def erstelle_oder_aktualisiere_support_panel() -> discord.Message | None:
+    channel = await get_support_panel_channel()
+    if channel is None:
+        print("Support-Panel-Channel nicht konfiguriert oder nicht gefunden.")
+        return None
+
+    panel_id = support_daten.get("panel_message_id")
+    if panel_id:
+        try:
+            message = await channel.fetch_message(int(panel_id))
+            await message.edit(embed=support_panel_embed(), view=SupportPanelView())
+            return message
+        except Exception:
+            support_daten["panel_message_id"] = None
+
+    async for message in channel.history(limit=100):
+        if (
+            message.author == bot.user
+            and message.embeds
+            and message.embeds[0].title == "❓ Fragen an das Team"
+        ):
+            support_daten["panel_message_id"] = message.id
+            speichere_daten()
+            await message.edit(embed=support_panel_embed(), view=SupportPanelView())
+            return message
+
+    message = await channel.send(embed=support_panel_embed(), view=SupportPanelView())
+    support_daten["panel_message_id"] = message.id
+    speichere_daten()
+    return message
+
+
+async def support_channel_schliessen(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+) -> None:
+    ticket = support_ticket_fuer_channel(channel.id)
+    if ticket is None:
+        await interaction.response.send_message(
+            "Dieser Channel gehört zu keiner gespeicherten Support-Anfrage.",
+            ephemeral=True,
+            delete_after=8,
+        )
+        return
+
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message(
+            "Mitglied konnte nicht erkannt werden.",
+            ephemeral=True,
+            delete_after=5,
+        )
+        return
+
+    user_id = int(ticket.get("user_id", 0))
+    darf_schliessen = ist_admin(interaction.user) or interaction.user.id == user_id
+    if not darf_schliessen:
+        await interaction.response.send_message(
+            "Du darfst diese Anfrage nicht schließen.",
+            ephemeral=True,
+            delete_after=5,
+        )
+        return
+
+    ticket["status"] = "geschlossen"
+    ticket["closed_by"] = interaction.user.id
+    ticket["closed_at"] = datetime.now().isoformat(timespec="seconds")
+    speichere_daten()
+
+    await interaction.response.send_message(
+        "Die Anfrage wird in 5 Sekunden geschlossen.",
+        ephemeral=True,
+    )
+
+    if interaction.guild:
+        await log_senden(
+            interaction.guild,
+            "🔒 Support-Anfrage geschlossen",
+            (
+                f"**Channel:** {channel.name}\n"
+                f"**Geschlossen von:** {interaction.user.mention}\n"
+                f"**Fragesteller-ID:** `{user_id}`"
+            ),
+            discord.Color.red(),
+        )
+
+    await discord.utils.sleep_until(
+        discord.utils.utcnow() + timedelta(seconds=5)
+    )
+    support_daten.get("tickets", {}).pop(str(channel.id), None)
+    speichere_daten()
+
+    try:
+        await channel.delete(reason=f"Support geschlossen von {interaction.user}")
+    except Exception as fehler:
+        print(f"Support-Channel konnte nicht gelöscht werden: {fehler}")
+
+
+class SupportFrageModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Frage an das Team")
+
+        self.betreff = discord.ui.TextInput(
+            label="Betreff",
+            placeholder="Worum geht es?",
+            min_length=3,
+            max_length=80,
+            required=True,
+        )
+        self.frage = discord.ui.TextInput(
+            label="Deine Frage",
+            placeholder="Beschreibe dein Anliegen möglichst genau.",
+            style=discord.TextStyle.paragraph,
+            min_length=10,
+            max_length=1800,
+            required=True,
+        )
+        self.add_item(self.betreff)
+        self.add_item(self.frage)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member) or interaction.guild is None:
+            await interaction.response.send_message(
+                "Die Anfrage kann nur auf dem Server erstellt werden.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        member = interaction.user
+        guild = interaction.guild
+
+        # Pro Benutzer nur ein offenes Ticket.
+        for channel_id, ticket in support_daten.get("tickets", {}).items():
+            if (
+                isinstance(ticket, dict)
+                and int(ticket.get("user_id", 0)) == member.id
+                and ticket.get("status", "offen") == "offen"
+            ):
+                channel = guild.get_channel(int(channel_id))
+                if isinstance(channel, discord.TextChannel):
+                    await interaction.response.send_message(
+                        f"Du hast bereits eine offene Anfrage: {channel.mention}",
+                        ephemeral=True,
+                        delete_after=12,
+                    )
+                    return
+
+        category = await get_support_category(guild)
+        if category is None:
+            await interaction.response.send_message(
+                "Die Support-Kategorie ist nicht konfiguriert. Bitte informiere einen Admin.",
+                ephemeral=True,
+                delete_after=12,
+            )
+            return
+
+        admin_role = discord.utils.get(guild.roles, name=ADMIN_ROLE_NAME)
+        bot_member = guild.me
+
+        overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite] = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            member: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True,
+            ),
+        }
+
+        if admin_role is not None:
+            overwrites[admin_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_messages=True,
+            )
+
+        if bot_member is not None:
+            overwrites[bot_member] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_channels=True,
+                manage_messages=True,
+            )
+
+        nummer = int(support_daten.get("next_number", 1))
+        sicherer_name = re.sub(r"[^a-z0-9-]", "-", member.name.lower())
+        sicherer_name = re.sub(r"-+", "-", sicherer_name).strip("-") or "mitglied"
+        channel_name = f"frage-{nummer:04d}-{sicherer_name}"[:95]
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            channel = await guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites,
+                topic=f"Private Support-Anfrage von {member} | User-ID {member.id}",
+                reason=f"Support-Anfrage von {member}",
+            )
+        except Exception as fehler:
+            await interaction.followup.send(
+                f"Der private Support-Channel konnte nicht erstellt werden: `{fehler}`",
+                ephemeral=True,
+            )
+            return
+
+        betreff = str(self.betreff.value).strip()
+        frage = str(self.frage.value).strip()
+
+        support_daten.setdefault("tickets", {})[str(channel.id)] = {
+            "number": nummer,
+            "user_id": member.id,
+            "user_name": str(member),
+            "subject": betreff,
+            "question": frage,
+            "status": "offen",
+            "channel_id": channel.id,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        support_daten["next_number"] = nummer + 1
+        speichere_daten()
+
+        await channel.send(
+            content=f"{member.mention} – das Admin-Team wurde über deine Anfrage informiert.",
+            embed=support_ticket_embed(
+                member=member,
+                betreff=betreff,
+                frage=frage,
+                nummer=nummer,
+            ),
+            view=SupportTicketView(),
+        )
+
+        await interaction.followup.send(
+            f"Deine private Anfrage wurde erstellt: {channel.mention}",
+            ephemeral=True,
+        )
+
+        await log_senden(
+            guild,
+            "📩 Neue Support-Anfrage",
+            (
+                f"**Von:** {member.mention}\n"
+                f"**Channel:** {channel.mention}\n"
+                f"**Betreff:** {betreff}"
+            ),
+            discord.Color.green(),
+        )
+
+
+class SupportPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Frage stellen",
+        emoji="📩",
+        style=discord.ButtonStyle.primary,
+        custom_id="support_frage_stellen",
+    )
+    async def frage_stellen(
+        self,
+        interaction: discord.Interaction,
+        _button: discord.ui.Button,
+    ) -> None:
+        await interaction.response.send_modal(SupportFrageModal())
+
+
+class SupportSchliessenBestaetigungView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=30)
+
+    @discord.ui.button(
+        label="Ja, schließen",
+        emoji="🔒",
+        style=discord.ButtonStyle.danger,
+    )
+    async def bestaetigen(
+        self,
+        interaction: discord.Interaction,
+        _button: discord.ui.Button,
+    ) -> None:
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "Support-Channel nicht erkannt.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+        await support_channel_schliessen(interaction, interaction.channel)
+
+    @discord.ui.button(
+        label="Abbrechen",
+        emoji="↩️",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def abbrechen(
+        self,
+        interaction: discord.Interaction,
+        _button: discord.ui.Button,
+    ) -> None:
+        await interaction.response.edit_message(
+            content="Schließen abgebrochen.",
+            view=None,
+        )
+
+
+class SupportTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Erledigt",
+        emoji="✅",
+        style=discord.ButtonStyle.success,
+        custom_id="support_ticket_erledigt",
+    )
+    async def erledigt(
+        self,
+        interaction: discord.Interaction,
+        _button: discord.ui.Button,
+    ) -> None:
+        if (
+            not isinstance(interaction.user, discord.Member)
+            or not ist_admin(interaction.user)
+            or not isinstance(interaction.channel, discord.TextChannel)
+        ):
+            await interaction.response.send_message(
+                "Nur ein Admin kann eine Anfrage als erledigt markieren.",
+                ephemeral=True,
+                delete_after=6,
+            )
+            return
+
+        ticket = support_ticket_fuer_channel(interaction.channel.id)
+        if ticket is None:
+            await interaction.response.send_message(
+                "Support-Daten nicht gefunden.",
+                ephemeral=True,
+                delete_after=6,
+            )
+            return
+
+        user_id = int(ticket.get("user_id", 0))
+        member = interaction.guild.get_member(user_id) if interaction.guild else None
+
+        if member is not None:
+            overwrite = interaction.channel.overwrites_for(member)
+            overwrite.send_messages = False
+            overwrite.view_channel = True
+            overwrite.read_message_history = True
+            await interaction.channel.set_permissions(
+                member,
+                overwrite=overwrite,
+                reason=f"Support erledigt von {interaction.user}",
+            )
+
+        ticket["status"] = "erledigt"
+        ticket["resolved_by"] = interaction.user.id
+        ticket["resolved_at"] = datetime.now().isoformat(timespec="seconds")
+        speichere_daten()
+
+        await interaction.response.send_message(
+            f"✅ Anfrage wurde von {interaction.user.mention} als erledigt markiert.\n"
+            "Der Fragesteller kann die Antworten weiterhin lesen.",
+        )
+
+    @discord.ui.button(
+        label="Wieder öffnen",
+        emoji="🔓",
+        style=discord.ButtonStyle.secondary,
+        custom_id="support_ticket_wieder_oeffnen",
+    )
+    async def wieder_oeffnen(
+        self,
+        interaction: discord.Interaction,
+        _button: discord.ui.Button,
+    ) -> None:
+        if (
+            not isinstance(interaction.user, discord.Member)
+            or not ist_admin(interaction.user)
+            or not isinstance(interaction.channel, discord.TextChannel)
+        ):
+            await interaction.response.send_message(
+                "Nur ein Admin kann die Anfrage wieder öffnen.",
+                ephemeral=True,
+                delete_after=6,
+            )
+            return
+
+        ticket = support_ticket_fuer_channel(interaction.channel.id)
+        if ticket is None:
+            await interaction.response.send_message(
+                "Support-Daten nicht gefunden.",
+                ephemeral=True,
+                delete_after=6,
+            )
+            return
+
+        user_id = int(ticket.get("user_id", 0))
+        member = interaction.guild.get_member(user_id) if interaction.guild else None
+        if member is not None:
+            overwrite = interaction.channel.overwrites_for(member)
+            overwrite.send_messages = True
+            overwrite.view_channel = True
+            overwrite.read_message_history = True
+            await interaction.channel.set_permissions(
+                member,
+                overwrite=overwrite,
+                reason=f"Support wieder geöffnet von {interaction.user}",
+            )
+
+        ticket["status"] = "offen"
+        ticket["reopened_by"] = interaction.user.id
+        ticket["reopened_at"] = datetime.now().isoformat(timespec="seconds")
+        speichere_daten()
+
+        await interaction.response.send_message(
+            f"🔓 Anfrage wurde von {interaction.user.mention} wieder geöffnet."
+        )
+
+    @discord.ui.button(
+        label="Schließen",
+        emoji="🔒",
+        style=discord.ButtonStyle.danger,
+        custom_id="support_ticket_schliessen",
+    )
+    async def schliessen(
+        self,
+        interaction: discord.Interaction,
+        _button: discord.ui.Button,
+    ) -> None:
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "Support-Channel nicht erkannt.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        ticket = support_ticket_fuer_channel(interaction.channel.id)
+        if ticket is None:
+            await interaction.response.send_message(
+                "Support-Daten nicht gefunden.",
+                ephemeral=True,
+                delete_after=6,
+            )
+            return
+
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "Mitglied nicht erkannt.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        user_id = int(ticket.get("user_id", 0))
+        if not (ist_admin(interaction.user) or interaction.user.id == user_id):
+            await interaction.response.send_message(
+                "Du darfst diese Anfrage nicht schließen.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        await interaction.response.send_message(
+            "Soll diese Support-Anfrage wirklich geschlossen und der Channel gelöscht werden?",
+            view=SupportSchliessenBestaetigungView(),
+            ephemeral=True,
+        )
+
+
+class SupportCommands(app_commands.Group):
+    def __init__(self):
+        super().__init__(name="support", description="Privates Frage-System verwalten")
+
+    @app_commands.command(
+        name="panel_erstellen",
+        description="Admin: Erstellt oder aktualisiert das Frage-Panel",
+    )
+    async def panel_erstellen(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message(
+                "Du hast dafür keine Rechte.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        message = await erstelle_oder_aktualisiere_support_panel()
+        if message is None:
+            await interaction.followup.send(
+                "Support-Panel konnte nicht erstellt werden. Prüfe "
+                "`SUPPORT_PANEL_CHANNEL_ID` und die Bot-Rechte.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            f"Support-Panel wurde erstellt oder aktualisiert: {message.jump_url}",
+            ephemeral=True,
+        )
 
 
 # =========================
@@ -1914,6 +2589,8 @@ async def on_ready() -> None:
     guild = discord.Object(id=GUILD_ID)
 
     bot.add_view(BewerbungVoteView())
+    bot.add_view(SupportPanelView())
+    bot.add_view(SupportTicketView())
     for tag in TAGE:
         bot.add_view(IniView(tag))
 
@@ -1927,10 +2604,18 @@ async def on_ready() -> None:
     except app_commands.CommandAlreadyRegistered:
         pass
 
+    try:
+        bot.tree.add_command(SupportCommands(), guild=guild)
+    except app_commands.CommandAlreadyRegistered:
+        pass
+
     await bot.tree.sync(guild=guild)
 
     for tag in TAGE:
         await update_ini_message(tag)
+
+    if SUPPORT_PANEL_CHANNEL_ID > 0:
+        await erstelle_oder_aktualisiere_support_panel()
 
     print("Bot ist bereit.")
 

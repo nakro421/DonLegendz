@@ -1,51 +1,63 @@
-# Fiesta Online Discord Bot
+# Fiesta Online Discord Bot mit privatem Support-System
 
-## Railway
+## Upload
 
-1. Dateien in dein GitHub-Repository hochladen.
-2. Railway-Variable setzen:
-   - `DISCORD_TOKEN`
-3. Railway Volume einrichten:
-   - Mount Path: `/app/data`
-4. Neu deployen.
+Diese Dateien in dein GitHub-Repository hochladen und Railway neu deployen.
 
-## Freie Ini-Uhrzeiten pro Tag
+## Railway Variables
 
-### Hinzufügen
-`/ini uhrzeit_hinzufuegen`
+Pflicht:
 
-Tag auswählen, danach im Modal Start- und Endzeit im Format `HH:MM` eintragen.
+- `DISCORD_TOKEN`
+- `SUPPORT_PANEL_CHANNEL_ID`
+- `SUPPORT_CATEGORY_ID`
 
-Beispiel:
-- Start: `19:15`
-- Ende: `20:45`
+`SUPPORT_PANEL_CHANNEL_ID` ist die ID des öffentlichen Channels, in dem das Frage-Panel stehen soll.
 
-### Bearbeiten
-`/ini uhrzeit_bearbeiten`
+`SUPPORT_CATEGORY_ID` ist die ID der Kategorie, in der die privaten Frage-Channels erstellt werden.
 
-Tag und vorhandenes Zeitfenster auswählen. Danach neue Start- und Endzeit eintragen.
+## Railway Volume
 
-Vorhandene Anmeldungen werden beim Bearbeiten automatisch in das neue Zeitfenster übernommen.
+Mount Path:
 
-### Löschen
-`/ini uhrzeit_loeschen`
+`/app/data`
 
-Ein Zeitfenster kann nur gelöscht werden, wenn dort keine Anmeldungen vorhanden sind.
+Die Datei `/app/data/fiesta_data.json` enthält Ini-, Bewerbungs- und Support-Daten.
 
-### Anzeigen
-`/ini uhrzeiten_anzeigen`
+## Bot-Rechte
 
-Zeigt alle konfigurierten Zeitfenster des ausgewählten Tages.
+Der Bot benötigt mindestens:
 
-## Regeln
+- Kanäle anzeigen
+- Nachrichten senden
+- Nachrichtenverlauf anzeigen
+- Kanäle verwalten
+- Rollen/Berechtigungen für Channels verwalten
+- Links einbetten
+- Dateien anhängen
 
-- Jeder Wochentag hat eigene Zeitfenster.
-- Stunde und Minute sind frei wählbar.
-- Format: `HH:MM`
-- Zeitfenster dürfen sich überschneiden.
-- Über-Nacht-Zeiten wie `22:30 - 00:30` sind erlaubt.
-- Maximal 25 Zeitfenster pro Tag, da Discord-Dropdowns höchstens 25 Optionen unterstützen.
+## Support-Ablauf
 
-## Überschneidungen
+1. Im öffentlichen Support-Channel steht der Button **Frage stellen**.
+2. Der Member trägt Betreff und Frage ein.
+3. Der Bot erstellt einen privaten Text-Channel.
+4. Nur Fragesteller, Admin-Rolle und Bot sehen den Channel.
+5. Admins antworten direkt im Channel.
+6. Der Fragesteller sieht die Antworten sofort.
+7. **Erledigt** sperrt nur das Schreiben; der Fragesteller kann weiterhin alles lesen.
+8. **Wieder öffnen** erlaubt dem Fragesteller erneut zu schreiben.
+9. **Schließen** löscht den Support-Channel nach Bestätigung.
 
-Überschneidende Zeitfenster sind ausdrücklich erlaubt.
+## Admin-Befehl
+
+`/support panel_erstellen`
+
+Erstellt oder aktualisiert das Support-Panel manuell.
+
+## Hinweis zur Admin-Rolle
+
+Der Bot verwendet die bereits im Code eingestellte Rolle:
+
+`Admin`
+
+Ändere `ADMIN_ROLE_NAME`, falls deine Admin-Rolle anders heißt.
