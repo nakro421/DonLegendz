@@ -20,7 +20,6 @@ LOG_CHANNEL_ID = 1522722541360382144
 # Datei-Speicher auf Railway Volume.
 # In Railway Volume Mount Path bitte /app/data verwenden.
 DATA_FILE = Path(os.getenv("DATA_FILE", "/app/data/fiesta_data.json"))
-INITIAL_STATS_FILE = Path(__file__).with_name("initial_member_stats.json")
 
 # Bewerbungssystem
 BEWERBUNG_CHANNEL_ID = 1523646727461146624
@@ -89,13 +88,6 @@ support_daten: dict = {
     "tickets": {},
     "panel_message_id": None,
     "next_number": 1,
-}
-
-statistik_daten: dict = {
-    "members": {},
-    "sessions": {},
-    "history": [],
-    "initial_import_done": False,
 }
 
 
@@ -208,80 +200,9 @@ def normalisiere_support_daten(rohdaten: object) -> dict:
     return daten
 
 
-
-def leere_statistik_daten() -> dict:
-    return {
-        "members": {},
-        "sessions": {},
-        "history": [],
-        "initial_import_done": False,
-    }
-
-
-def normalisiere_statistik_daten(rohdaten: object) -> dict:
-    daten = leere_statistik_daten()
-    if not isinstance(rohdaten, dict):
-        return daten
-
-    for key in ("members", "sessions"):
-        value = rohdaten.get(key, {})
-        if isinstance(value, dict):
-            daten[key] = value
-
-    history = rohdaten.get("history", [])
-    if isinstance(history, list):
-        daten["history"] = history
-
-    daten["initial_import_done"] = bool(rohdaten.get("initial_import_done", False))
-    return daten
-
-
-def normalisiere_spieler_key(name: str) -> str:
-    return re.sub(r"\s+", " ", name.strip().casefold())
-
-
-def importiere_startstatistik() -> None:
-    if statistik_daten.get("initial_import_done"):
-        return
-    if not INITIAL_STATS_FILE.exists():
-        print(f"Keine Startstatistik gefunden: {INITIAL_STATS_FILE}")
-        return
-
-    try:
-        rohdaten = json.loads(INITIAL_STATS_FILE.read_text(encoding="utf-8"))
-    except Exception as fehler:
-        print(f"Startstatistik konnte nicht geladen werden: {fehler}")
-        return
-
-    members = rohdaten.get("members", {}) if isinstance(rohdaten, dict) else {}
-    if not isinstance(members, dict):
-        return
-
-    for name, initial in members.items():
-        if not isinstance(initial, dict):
-            continue
-        key = normalisiere_spieler_key(str(name))
-        runs = max(0, int(initial.get("inis_total", 0)))
-        wald = max(0, int(initial.get("wald_runs", runs)))
-        hours = max(0, int(initial.get("playtime_hours", runs * 2)))
-        member = statistik_daten.setdefault("members", {}).setdefault(key, {})
-        member.setdefault("display_name", str(name))
-        member.setdefault("discord_user_id", initial.get("discord_user_id"))
-        member["inis_total"] = max(int(member.get("inis_total", 0)), runs)
-        member["wald_runs"] = max(int(member.get("wald_runs", 0)), wald)
-        member["kalzar_runs"] = max(int(member.get("kalzar_runs", 0)), int(initial.get("kalzar_runs", 0)))
-        member["total_minutes"] = max(int(member.get("total_minutes", 0)), hours * 60)
-        member.setdefault("class_counts", {})
-        member.setdefault("monthly", {})
-        member.setdefault("awards", [])
-        member["last_run"] = initial.get("last_run")
-
-    statistik_daten["initial_import_done"] = True
-    print(f"Startstatistik importiert: {len(members)} Mitglieder")
-
 def lade_daten() -> None:
     """Lädt gespeicherte Daten aus dem Railway Volume."""
-    global ini_listen, bewerbungen, zeiten_pro_tag, support_daten, statistik_daten
+    global ini_listen, bewerbungen, zeiten_pro_tag, support_daten
 
     if not DATA_FILE.exists():
         zeiten_pro_tag = {
@@ -290,8 +211,6 @@ def lade_daten() -> None:
         }
         ini_listen = leere_ini_listen()
         support_daten = leere_support_daten()
-        statistik_daten = leere_statistik_daten()
-        importiere_startstatistik()
         speichere_daten()
         print(f"Neue Datendatei erstellt: {DATA_FILE}")
         return
@@ -307,8 +226,6 @@ def lade_daten() -> None:
         }
         ini_listen = leere_ini_listen()
         support_daten = leere_support_daten()
-        statistik_daten = leere_statistik_daten()
-        importiere_startstatistik()
         return
 
     settings = daten.get("settings", {})
@@ -350,8 +267,6 @@ def lade_daten() -> None:
     ini_listen = normalisiere_ini_daten(daten.get("ini", {}))
     bewerbungen = normalisiere_bewerbungsdaten(daten.get("bewerbungen", {}))
     support_daten = normalisiere_support_daten(daten.get("support", {}))
-    statistik_daten = normalisiere_statistik_daten(daten.get("statistik", {}))
-    importiere_startstatistik()
     print(f"Daten geladen: {DATA_FILE}")
 
 
@@ -365,7 +280,6 @@ def speichere_daten() -> None:
         "ini": ini_listen,
         "bewerbungen": bewerbungen,
         "support": support_daten,
-        "statistik": statistik_daten,
         "klassen": {},
         "settings": {
             "zeiten_pro_tag": zeiten_pro_tag,
@@ -698,159 +612,6 @@ async def update_ini_message(tag: str) -> None:
         msg = await channel.send(embed=ini_embed(tag), view=IniView(tag))
         ini_message_cache[tag] = msg.id
 
-
-
-# =========================
-# MONATSSTATISTIK / AUSZEICHNUNGEN
-# =========================
-
-KLASSEN_NAMEN = ["Gladi", "Hexi", "Zaubi", "TR", "Assa", "HK", "Luna", "Ordi", "SS"]
-KLASSEN_EMOJIS = {
-    "Gladi": "🪓", "Hexi": "📖", "Zaubi": "🪄", "TR": "🛡️",
-    "Assa": "⚔️", "HK": "❤️", "Luna": "🌙", "Ordi": "✨", "SS": "🏹",
-}
-
-
-def zerlege_fiesta_eintrag(fiesta: str) -> tuple[str, str]:
-    textwert = fiesta.strip()
-    match = re.match(r"^\s*([^\-]+?)\s*-\s*(.+?)\s*$", textwert)
-    if not match:
-        return "Unbekannt", textwert
-    klasse_roh, name = match.group(1).strip(), match.group(2).strip()
-    klasse = next((k for k in KLASSEN_NAMEN if k.casefold() == klasse_roh.casefold()), klasse_roh)
-    return klasse, name
-
-
-def get_stat_member(name: str, discord_user_id: int | None = None) -> dict:
-    key = normalisiere_spieler_key(name)
-    member = statistik_daten.setdefault("members", {}).setdefault(key, {
-        "display_name": name.strip(),
-        "discord_user_id": discord_user_id,
-        "inis_total": 0,
-        "wald_runs": 0,
-        "kalzar_runs": 0,
-        "total_minutes": 0,
-        "class_counts": {},
-        "monthly": {},
-        "awards": [],
-        "last_run": None,
-    })
-    if discord_user_id:
-        member["discord_user_id"] = discord_user_id
-    return member
-
-
-def berechne_auszeichnungen(member: dict) -> list[str]:
-    total = int(member.get("inis_total", 0))
-    awards: list[str] = []
-    if total >= 1: awards.append("🏅 Erste Ini")
-    if total >= 100: awards.append("🎖️ Veteran")
-    if total >= 500: awards.append("👑 Ini-Legende")
-
-    monthly = member.get("monthly", {})
-    if any(int(v.get("runs", 0)) >= 25 for v in monthly.values() if isinstance(v, dict)):
-        awards.append("🔥 Stammspieler")
-
-    for klasse, count in member.get("class_counts", {}).items():
-        if int(count) >= 100:
-            awards.append(f"{KLASSEN_EMOJIS.get(klasse, '🏅')} {klasse}-Meister")
-    return awards
-
-
-def session_key(tag: str, zeit: str) -> str:
-    return f"{tag}|{zeit}"
-
-
-def neue_session(tag: str, zeit: str) -> dict:
-    now = datetime.now()
-    return {
-        "id": now.strftime("%Y%m%d%H%M%S%f"),
-        "tag": tag,
-        "zeitfenster": zeit,
-        "starts": [],
-        "ends": [],
-        "credited": False,
-        "created_at": now.isoformat(timespec="seconds"),
-    }
-
-
-def credit_session(session: dict, participants: list[dict]) -> None:
-    if session.get("credited"):
-        return
-
-    now = datetime.now()
-    starts = session.get("starts", [])
-    first_start = None
-    if starts:
-        try:
-            first_start = datetime.fromisoformat(starts[0]["timestamp"])
-        except Exception:
-            first_start = None
-    duration_minutes = max(1, int((now - first_start).total_seconds() // 60)) if first_start else 120
-    month_key = now.strftime("%Y-%m")
-
-    archived_participants = []
-    seen: set[str] = set()
-    for entry in participants:
-        if not isinstance(entry, dict):
-            continue
-        klasse, name = zerlege_fiesta_eintrag(str(entry.get("fiesta", "")))
-        if not name:
-            continue
-        key = normalisiere_spieler_key(name)
-        if key in seen:
-            continue
-        seen.add(key)
-        discord_id = entry.get("discord_user") or entry.get("eingetragen_von")
-        member = get_stat_member(name, int(discord_id) if discord_id else None)
-        member["inis_total"] = int(member.get("inis_total", 0)) + 1
-        member["wald_runs"] = int(member.get("wald_runs", 0)) + 1
-        member["total_minutes"] = int(member.get("total_minutes", 0)) + duration_minutes
-        member["last_run"] = now.strftime("%d.%m.%Y")
-        class_counts = member.setdefault("class_counts", {})
-        class_counts[klasse] = int(class_counts.get(klasse, 0)) + 1
-        month = member.setdefault("monthly", {}).setdefault(month_key, {
-            "runs": 0, "minutes": 0, "class_counts": {}, "day_counts": {}, "time_counts": {}
-        })
-        month["runs"] = int(month.get("runs", 0)) + 1
-        month["minutes"] = int(month.get("minutes", 0)) + duration_minutes
-        month["class_counts"][klasse] = int(month["class_counts"].get(klasse, 0)) + 1
-        tag = session.get("tag", "Unbekannt")
-        zeit = session.get("zeitfenster", "Unbekannt")
-        month["day_counts"][tag] = int(month["day_counts"].get(tag, 0)) + 1
-        month["time_counts"][zeit] = int(month["time_counts"].get(zeit, 0)) + 1
-        member["awards"] = berechne_auszeichnungen(member)
-        archived_participants.append({"name": name, "klasse": klasse, "discord_user_id": discord_id})
-
-    session["credited"] = True
-    session["official_start"] = starts[0]["timestamp"] if starts else None
-    session["official_end"] = now.isoformat(timespec="seconds")
-    session["duration_minutes"] = duration_minutes
-    session["participants"] = archived_participants
-    statistik_daten.setdefault("history", []).append(dict(session))
-
-
-def top_wert(mapping: dict) -> str:
-    if not mapping:
-        return "–"
-    return max(mapping.items(), key=lambda item: int(item[1]))[0]
-
-
-def profil_embed(name: str, member: dict, month_key: str | None = None) -> discord.Embed:
-    month_key = month_key or datetime.now().strftime("%Y-%m")
-    month = member.get("monthly", {}).get(month_key, {})
-    total_minutes = int(member.get("total_minutes", 0))
-    awards = member.get("awards", []) or berechne_auszeichnungen(member)
-    embed = discord.Embed(title=f"📊 Statistik – {member.get('display_name', name)}", color=discord.Color.gold())
-    embed.add_field(name="Ini's insgesamt", value=str(member.get("inis_total", 0)), inline=True)
-    embed.add_field(name="Wald Runs", value=str(member.get("wald_runs", 0)), inline=True)
-    embed.add_field(name="Kalzar Runs", value=str(member.get("kalzar_runs", 0)), inline=True)
-    embed.add_field(name=f"Runs {month_key}", value=str(month.get("runs", 0)), inline=True)
-    embed.add_field(name="Gesamtzeit", value=f"{total_minutes // 60} Std. {total_minutes % 60} Min.", inline=True)
-    embed.add_field(name="Lieblingsklasse", value=top_wert(member.get("class_counts", {})), inline=True)
-    embed.add_field(name="Letzter Run", value=str(member.get("last_run") or "–"), inline=True)
-    embed.add_field(name="Auszeichnungen", value="\n".join(awards) if awards else "Noch keine", inline=False)
-    return embed
 
 # =========================
 # MODALS
@@ -1304,61 +1065,6 @@ class IniZeitSelect(discord.ui.Select):
         await interaction.response.send_modal(AnmeldungModal(self.tag, zeit))
 
 
-
-class IniStatusZeitSelect(discord.ui.Select):
-    def __init__(self, tag: str, action: str):
-        self.tag = tag
-        self.action = action
-        options = [discord.SelectOption(label=z, value=z, emoji="🕒") for z in aktive_zeiten(tag)]
-        super().__init__(
-            placeholder="Uhrzeit auswählen",
-            min_values=1,
-            max_values=1,
-            options=options or [discord.SelectOption(label="Keine Uhrzeit", value="__keine__")],
-            disabled=not options,
-        )
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
-            await interaction.response.send_message("Nur Admins dürfen das.", ephemeral=True, delete_after=5)
-            return
-        zeit = self.values[0]
-        key = session_key(self.tag, zeit)
-        session = statistik_daten.setdefault("sessions", {}).get(key)
-        now = datetime.now().isoformat(timespec="seconds")
-
-        if self.action == "start":
-            if not isinstance(session, dict) or session.get("credited"):
-                session = neue_session(self.tag, zeit)
-                statistik_daten["sessions"][key] = session
-            session.setdefault("starts", []).append({"timestamp": now, "admin_id": interaction.user.id})
-            speichere_daten()
-            await interaction.response.send_message(
-                f"▶️ **{self.tag} – {zeit}** wurde gestartet. Start-Klicks: **{len(session['starts'])}**",
-                ephemeral=True,
-            )
-        else:
-            if not isinstance(session, dict):
-                session = neue_session(self.tag, zeit)
-                statistik_daten["sessions"][key] = session
-            session.setdefault("ends", []).append({"timestamp": now, "admin_id": interaction.user.id})
-            first_credit = not session.get("credited")
-            if first_credit:
-                credit_session(session, list(ini_listen.get(self.tag, {}).get(zeit, [])))
-            speichere_daten()
-            await interaction.response.send_message(
-                f"⏹️ **{self.tag} – {zeit}** wurde beendet. Ende-Klicks: **{len(session['ends'])}**. "
-                + ("Statistik wurde gutgeschrieben." if first_credit else "Keine doppelte Statistik-Gutschrift."),
-                ephemeral=True,
-            )
-
-
-class IniStatusZeitView(discord.ui.View):
-    def __init__(self, tag: str, action: str):
-        super().__init__(timeout=60)
-        self.add_item(IniStatusZeitSelect(tag, action))
-
-
 class IniView(discord.ui.View):
     def __init__(self, tag: str):
         super().__init__(timeout=None)
@@ -1396,36 +1102,6 @@ class IniView(discord.ui.View):
         reset.callback = self.reset_callback
         self.add_item(reset)
 
-        starten = discord.ui.Button(
-            label="Ini starten", emoji="▶️", style=discord.ButtonStyle.success,
-            custom_id=f"ini_starten_{tag}", row=2,
-        )
-        starten.callback = self.starten_callback
-        self.add_item(starten)
-
-        beenden = discord.ui.Button(
-            label="Ini beenden", emoji="⏹️", style=discord.ButtonStyle.danger,
-            custom_id=f"ini_beenden_{tag}", row=2,
-        )
-        beenden.callback = self.beenden_callback
-        self.add_item(beenden)
-
-
-    async def starten_callback(self, interaction: discord.Interaction) -> None:
-        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
-            await interaction.response.send_message("Nur Admins dürfen eine Ini starten.", ephemeral=True, delete_after=5)
-            return
-        await interaction.response.send_message(
-            "Wähle die Ini aus, die jetzt startet:", view=IniStatusZeitView(self.tag, "start"), ephemeral=True
-        )
-
-    async def beenden_callback(self, interaction: discord.Interaction) -> None:
-        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
-            await interaction.response.send_message("Nur Admins dürfen eine Ini beenden.", ephemeral=True, delete_after=5)
-            return
-        await interaction.response.send_message(
-            "Wähle die Ini aus, die jetzt beendet wird:", view=IniStatusZeitView(self.tag, "end"), ephemeral=True
-        )
 
     async def abmelden_callback(self, interaction: discord.Interaction) -> None:
         if not isinstance(interaction.user, discord.Member):
@@ -2881,61 +2557,6 @@ class IniCommands(app_commands.Group):
 
 
 
-
-class StatistikCommands(app_commands.Group):
-    def __init__(self):
-        super().__init__(name="statistik", description="Monatsstatistik und Auszeichnungen")
-
-    @app_commands.command(name="profil", description="Zeigt die Statistik eines Fiesta-Spielers")
-    async def profil(self, interaction: discord.Interaction, fiesta_name: str) -> None:
-        key = normalisiere_spieler_key(fiesta_name)
-        member = statistik_daten.get("members", {}).get(key)
-        if not isinstance(member, dict):
-            await interaction.response.send_message("Für diesen Namen wurde keine Statistik gefunden.", ephemeral=True)
-            return
-        await interaction.response.send_message(embed=profil_embed(fiesta_name, member))
-
-    @app_commands.command(name="monat", description="Zeigt die Monatsrangliste")
-    async def monat(self, interaction: discord.Interaction, monat: str | None = None) -> None:
-        month_key = (monat or datetime.now().strftime("%Y-%m")).strip()
-        ranking = []
-        class_totals: dict[str, int] = {}
-        for member in statistik_daten.get("members", {}).values():
-            if not isinstance(member, dict):
-                continue
-            month = member.get("monthly", {}).get(month_key, {})
-            runs = int(month.get("runs", 0)) if isinstance(month, dict) else 0
-            if runs:
-                ranking.append((member.get("display_name", "Unbekannt"), runs))
-                for klasse, count in month.get("class_counts", {}).items():
-                    class_totals[klasse] = class_totals.get(klasse, 0) + int(count)
-        ranking.sort(key=lambda item: (-item[1], item[0].casefold()))
-        lines = []
-        medals = ["🥇", "🥈", "🥉"]
-        for i, (name, runs) in enumerate(ranking[:20]):
-            prefix = medals[i] if i < 3 else f"**{i+1}.**"
-            lines.append(f"{prefix} **{name}** — {runs} Runs")
-        embed = discord.Embed(title=f"📈 Monatsstatistik {month_key}", color=discord.Color.blurple())
-        embed.description = "\n".join(lines) if lines else "In diesem Monat wurden noch keine beendeten Inis archiviert."
-        embed.add_field(name="Teilnahmen gesamt", value=str(sum(v for _, v in ranking)), inline=True)
-        embed.add_field(name="Aktive Spieler", value=str(len(ranking)), inline=True)
-        embed.add_field(name="Beliebteste Klasse", value=top_wert(class_totals), inline=True)
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="verknuepfen", description="Admin: Verknüpft einen Fiesta-Namen mit einem Discord-Member")
-    async def verknuepfen(self, interaction: discord.Interaction, fiesta_name: str, member: discord.Member) -> None:
-        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
-            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True)
-            return
-        stat = get_stat_member(fiesta_name, member.id)
-        stat["discord_user_id"] = member.id
-        stat["display_name"] = fiesta_name.strip()
-        speichere_daten()
-        await interaction.response.send_message(
-            f"**{fiesta_name}** wurde mit {member.mention} verknüpft.", ephemeral=True
-        )
-
-
 @bot.event
 async def on_message(message: discord.Message) -> None:
     if message.author.bot:
@@ -2986,11 +2607,6 @@ async def on_ready() -> None:
 
     try:
         bot.tree.add_command(SupportCommands(), guild=guild)
-    except app_commands.CommandAlreadyRegistered:
-        pass
-
-    try:
-        bot.tree.add_command(StatistikCommands(), guild=guild)
     except app_commands.CommandAlreadyRegistered:
         pass
 
