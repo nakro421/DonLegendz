@@ -1,0 +1,267 @@
+{
+  "description": "Startbestand aus der Tabelle 'Offizielle Gildenruns 140 Cap'.",
+  "hours_per_run": 2,
+  "members": {
+    "Pat": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 38,
+      "wald_runs": 38,
+      "kalzar_runs": 0,
+      "playtime_hours": 76,
+      "awards": []
+    },
+    "Dave": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 35,
+      "wald_runs": 35,
+      "kalzar_runs": 0,
+      "playtime_hours": 70,
+      "awards": []
+    },
+    "Emi": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 24,
+      "wald_runs": 24,
+      "kalzar_runs": 0,
+      "playtime_hours": 48,
+      "awards": []
+    },
+    "Heali": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 22,
+      "wald_runs": 22,
+      "kalzar_runs": 0,
+      "playtime_hours": 44,
+      "awards": []
+    },
+    "Kev": {
+      "discord_user_id": null,
+      "last_run": "29.06.",
+      "inis_total": 21,
+      "wald_runs": 21,
+      "kalzar_runs": 0,
+      "playtime_hours": 42,
+      "awards": []
+    },
+    "Lukas": {
+      "discord_user_id": null,
+      "last_run": "09.07.",
+      "inis_total": 20,
+      "wald_runs": 20,
+      "kalzar_runs": 0,
+      "playtime_hours": 40,
+      "awards": []
+    },
+    "Wlad": {
+      "discord_user_id": null,
+      "last_run": "02.07.",
+      "inis_total": 19,
+      "wald_runs": 19,
+      "kalzar_runs": 0,
+      "playtime_hours": 38,
+      "awards": []
+    },
+    "Justus": {
+      "discord_user_id": null,
+      "last_run": "22.06.",
+      "inis_total": 17,
+      "wald_runs": 17,
+      "kalzar_runs": 0,
+      "playtime_hours": 34,
+      "awards": []
+    },
+    "Benny": {
+      "discord_user_id": null,
+      "last_run": "28.06.",
+      "inis_total": 16,
+      "wald_runs": 16,
+      "kalzar_runs": 0,
+      "playtime_hours": 32,
+      "awards": []
+    },
+    "Timo": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 16,
+      "wald_runs": 16,
+      "kalzar_runs": 0,
+      "playtime_hours": 32,
+      "awards": []
+    },
+    "Alex": {
+      "discord_user_id": null,
+      "last_run": "26.06.",
+      "inis_total": 15,
+      "wald_runs": 15,
+      "kalzar_runs": 0,
+      "playtime_hours": 30,
+      "awards": []
+    },
+    "Linda": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 15,
+      "wald_runs": 15,
+      "kalzar_runs": 0,
+      "playtime_hours": 30,
+      "awards": []
+    },
+    "Hannes": {
+      "discord_user_id": null,
+      "last_run": "10.07.",
+      "inis_total": 14,
+      "wald_runs": 14,
+      "kalzar_runs": 0,
+      "playtime_hours": 28,
+      "awards": []
+    },
+    "Fynn": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 13,
+      "wald_runs": 13,
+      "kalzar_runs": 0,
+      "playtime_hours": 26,
+      "awards": []
+    },
+    "Dani": {
+      "discord_user_id": null,
+      "last_run": "24.06.",
+      "inis_total": 12,
+      "wald_runs": 12,
+      "kalzar_runs": 0,
+      "playtime_hours": 24,
+      "awards": []
+    },
+    "Kiwii": {
+      "discord_user_id": null,
+      "last_run": "06.07.",
+      "inis_total": 12,
+      "wald_runs": 12,
+      "kalzar_runs": 0,
+      "playtime_hours": 24,
+      "awards": []
+    },
+    "Franky": {
+      "discord_user_id": null,
+      "last_run": "10.07.",
+      "inis_total": 11,
+      "wald_runs": 11,
+      "kalzar_runs": 0,
+      "playtime_hours": 22,
+      "awards": []
+    },
+    "Angie": {
+      "discord_user_id": null,
+      "last_run": "06.07.",
+      "inis_total": 10,
+      "wald_runs": 10,
+      "kalzar_runs": 0,
+      "playtime_hours": 20,
+      "awards": []
+    },
+    "Lea": {
+      "discord_user_id": null,
+      "last_run": "28.06.",
+      "inis_total": 9,
+      "wald_runs": 9,
+      "kalzar_runs": 0,
+      "playtime_hours": 18,
+      "awards": []
+    },
+    "Dome": {
+      "discord_user_id": null,
+      "last_run": "06.07.",
+      "inis_total": 9,
+      "wald_runs": 9,
+      "kalzar_runs": 0,
+      "playtime_hours": 18,
+      "awards": []
+    },
+    "Dean": {
+      "discord_user_id": null,
+      "last_run": "05.07.",
+      "inis_total": 8,
+      "wald_runs": 8,
+      "kalzar_runs": 0,
+      "playtime_hours": 16,
+      "awards": []
+    },
+    "Yamac": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 7,
+      "wald_runs": 7,
+      "kalzar_runs": 0,
+      "playtime_hours": 14,
+      "awards": []
+    },
+    "Ray": {
+      "discord_user_id": null,
+      "last_run": "05.07.",
+      "inis_total": 6,
+      "wald_runs": 6,
+      "kalzar_runs": 0,
+      "playtime_hours": 12,
+      "awards": []
+    },
+    "Jan": {
+      "discord_user_id": null,
+      "last_run": "22.06.",
+      "inis_total": 3,
+      "wald_runs": 3,
+      "kalzar_runs": 0,
+      "playtime_hours": 6,
+      "awards": []
+    },
+    "Niclas": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 3,
+      "wald_runs": 3,
+      "kalzar_runs": 0,
+      "playtime_hours": 6,
+      "awards": []
+    },
+    "Toby": {
+      "discord_user_id": null,
+      "last_run": "08.07.",
+      "inis_total": 2,
+      "wald_runs": 2,
+      "kalzar_runs": 0,
+      "playtime_hours": 4,
+      "awards": []
+    },
+    "Daniel": {
+      "discord_user_id": null,
+      "last_run": "09.07.",
+      "inis_total": 2,
+      "wald_runs": 2,
+      "kalzar_runs": 0,
+      "playtime_hours": 4,
+      "awards": []
+    },
+    "Kati": {
+      "discord_user_id": null,
+      "last_run": "09.07.",
+      "inis_total": 2,
+      "wald_runs": 2,
+      "kalzar_runs": 0,
+      "playtime_hours": 4,
+      "awards": []
+    },
+    "Sam": {
+      "discord_user_id": null,
+      "last_run": "11.07.",
+      "inis_total": 2,
+      "wald_runs": 2,
+      "kalzar_runs": 0,
+      "playtime_hours": 4,
+      "awards": []
+    }
+  }
+}
