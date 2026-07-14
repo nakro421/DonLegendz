@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import uuid
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -65,11 +66,16 @@ zeiten_pro_tag: dict[str, list[str]] = {
 }
 
 MAX_ZEITEN_PRO_TAG = 25
+MAX_TERMINE_PRO_TAG = 25
+SELECT_LABEL_MAX = 100
 
 TAGE = list(INI_CHANNELS.keys())
 
-# Gleiche Namen dürfen in unterschiedlichen Uhrzeiten mehrfach stehen.
-# Nur im selben Zeitfenster wird ein doppelter Name blockiert.
+# Zusätzliche, frei benannte Ini-Termine pro Wochentag.
+ini_termine: dict[str, list[dict]] = {tag: [] for tag in TAGE}
+
+# Gleiche Namen dürfen in unterschiedlichen Terminen mehrfach stehen.
+# Nur im selben Termin wird ein doppelter Name blockiert.
 ini_listen: dict[str, dict[str, list[dict]]] = {
     tag: {zeit: [] for zeit in zeiten_pro_tag[tag]}
     for tag in TAGE
@@ -118,12 +124,16 @@ def normalisiere_ini_daten(rohdaten: object) -> dict[str, dict[str, list[dict]]]
                     if isinstance(eintrag, dict) and "fiesta" in eintrag
                 ]
 
-        # Alte belegte Zeitfenster werden nicht verworfen.
+        # Freie Termine und alte belegte Zeitfenster werden nicht verworfen.
+        gueltige_termin_keys = {
+            termin_key(str(termin.get("id")))
+            for termin in termine_fuer_tag(tag)
+        }
         for zeit, eintraege in tag_daten.items():
             if (
                 zeit not in neue_daten[tag]
                 and isinstance(eintraege, list)
-                and eintraege
+                and (eintraege or zeit in gueltige_termin_keys)
             ):
                 neue_daten[tag][zeit] = [
                     eintrag for eintrag in eintraege
@@ -168,6 +178,41 @@ def normalisiere_bewerbungsdaten(rohdaten: object) -> dict:
     return daten
 
 
+def leere_ini_termine() -> dict[str, list[dict]]:
+    return {tag: [] for tag in TAGE}
+
+
+def normalisiere_ini_termine(rohdaten: object) -> dict[str, list[dict]]:
+    daten = leere_ini_termine()
+
+    if not isinstance(rohdaten, dict):
+        return daten
+
+    for tag in TAGE:
+        rohe_termine = rohdaten.get(tag, [])
+        if not isinstance(rohe_termine, list):
+            continue
+
+        for termin in rohe_termine[:MAX_TERMINE_PRO_TAG]:
+            if not isinstance(termin, dict):
+                continue
+
+            uhrzeit = str(termin.get("uhrzeit", "")).strip()
+            name = str(termin.get("name", "")).strip()
+            if not uhrzeit or not name:
+                continue
+
+            daten[tag].append({
+                "id": str(termin.get("id") or uuid.uuid4().hex),
+                "uhrzeit": uhrzeit,
+                "name": name,
+                "created_by": termin.get("created_by"),
+                "created_at": termin.get("created_at"),
+            })
+
+    return daten
+
+
 def leere_support_daten() -> dict:
     return {
         "tickets": {},
@@ -202,7 +247,7 @@ def normalisiere_support_daten(rohdaten: object) -> dict:
 
 def lade_daten() -> None:
     """Lädt gespeicherte Daten aus dem Railway Volume."""
-    global ini_listen, bewerbungen, zeiten_pro_tag, support_daten
+    global ini_listen, bewerbungen, zeiten_pro_tag, support_daten, ini_termine
 
     if not DATA_FILE.exists():
         zeiten_pro_tag = {
@@ -210,6 +255,7 @@ def lade_daten() -> None:
             for tag in TAGE
         }
         ini_listen = leere_ini_listen()
+        ini_termine = leere_ini_termine()
         support_daten = leere_support_daten()
         speichere_daten()
         print(f"Neue Datendatei erstellt: {DATA_FILE}")
@@ -225,6 +271,7 @@ def lade_daten() -> None:
             for tag in TAGE
         }
         ini_listen = leere_ini_listen()
+        ini_termine = leere_ini_termine()
         support_daten = leere_support_daten()
         return
 
@@ -264,7 +311,14 @@ def lade_daten() -> None:
     for tag in TAGE:
         sortiere_zeiten(tag)
 
+    ini_termine = normalisiere_ini_termine(daten.get("ini_termine", {}))
     ini_listen = normalisiere_ini_daten(daten.get("ini", {}))
+
+    for tag in TAGE:
+        ini_listen.setdefault(tag, {})
+        for termin in termine_fuer_tag(tag):
+            ini_listen[tag].setdefault(termin_key(str(termin["id"])), [])
+
     bewerbungen = normalisiere_bewerbungsdaten(daten.get("bewerbungen", {}))
     support_daten = normalisiere_support_daten(daten.get("support", {}))
     print(f"Daten geladen: {DATA_FILE}")
@@ -278,6 +332,7 @@ def speichere_daten() -> None:
         "version": 1,
         "saved_at": datetime.now().isoformat(timespec="seconds"),
         "ini": ini_listen,
+        "ini_termine": ini_termine,
         "bewerbungen": bewerbungen,
         "support": support_daten,
         "klassen": {},
@@ -315,6 +370,52 @@ def hat_ini_rolle(member: discord.Member) -> bool:
 
 def aktive_zeiten(tag: str) -> list[str]:
     return list(zeiten_pro_tag.get(tag, []))
+
+
+def termine_fuer_tag(tag: str) -> list[dict]:
+    return [
+        termin for termin in ini_termine.get(tag, [])
+        if isinstance(termin, dict)
+    ]
+
+
+def termin_key(termin_id: str) -> str:
+    return f"termin:{termin_id}"
+
+
+def finde_termin(tag: str, termin_id: str) -> dict | None:
+    for termin in termine_fuer_tag(tag):
+        if str(termin.get("id")) == str(termin_id):
+            return termin
+    return None
+
+
+def termin_anzeige(termin: dict) -> str:
+    uhrzeit = str(termin.get("uhrzeit", "")).strip()
+    name = str(termin.get("name", "")).strip()
+    return f"{uhrzeit} — {name}" if uhrzeit and name else (name or uhrzeit or "Unbenannter Termin")
+
+
+def select_label(text: str) -> str:
+    text = str(text)
+    return text if len(text) <= SELECT_LABEL_MAX else text[:SELECT_LABEL_MAX - 1] + "…"
+
+
+def alle_slots(tag: str) -> list[tuple[str, str]]:
+    slots = [(zeit, zeit) for zeit in aktive_zeiten(tag)]
+    slots.extend(
+        (termin_key(str(termin.get("id"))), termin_anzeige(termin))
+        for termin in termine_fuer_tag(tag)
+    )
+    return slots
+
+
+def slot_anzeige(tag: str, slot_key: str) -> str:
+    if slot_key.startswith("termin:"):
+        termin = finde_termin(tag, slot_key.split(":", 1)[1])
+        if termin:
+            return termin_anzeige(termin)
+    return slot_key
 
 
 def zeit_zu_minuten(wert: str) -> int | None:
@@ -390,6 +491,25 @@ def sortiere_zeiten(tag: str) -> None:
     zeiten_pro_tag[tag].sort(key=sortierschluessel)
 
 
+async def termin_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    namespace = getattr(interaction, "namespace", None)
+    tag_wert = getattr(namespace, "tag", None) if namespace else None
+    tag_name = tag_wert if isinstance(tag_wert, str) else ""
+    current = current.strip().lower()
+
+    return [
+        app_commands.Choice(
+            name=select_label(termin_anzeige(termin)),
+            value=str(termin.get("id")),
+        )
+        for termin in termine_fuer_tag(tag_name)
+        if current in termin_anzeige(termin).lower()
+    ][:25]
+
+
 async def zeit_autocomplete(
     interaction: discord.Interaction,
     current: str,
@@ -417,8 +537,8 @@ def fiesta_name_existiert_in_zeit(tag: str, zeit: str, fiesta_name: str, ignore_
 
 def gesamt_teilnehmer(tag: str) -> int:
     return sum(
-        len(ini_listen.get(tag, {}).get(zeit, []))
-        for zeit in aktive_zeiten(tag)
+        len(ini_listen.get(tag, {}).get(slot_key, []))
+        for slot_key, _anzeige in alle_slots(tag)
     )
 
 
@@ -444,8 +564,8 @@ def klassen_emoji(fiesta_name: str) -> str:
 
 
 def finde_eintrag_nach_fiesta(tag: str, fiesta_name: str):
-    for zeit in aktive_zeiten(tag):
-        for index, eintrag in enumerate(ini_listen[tag][zeit]):
+    for zeit, _anzeige in alle_slots(tag):
+        for index, eintrag in enumerate(ini_listen.get(tag, {}).get(zeit, [])):
             if eintrag["fiesta"].lower() == fiesta_name.lower():
                 return zeit, index, eintrag
     return None, None, None
@@ -453,8 +573,8 @@ def finde_eintrag_nach_fiesta(tag: str, fiesta_name: str):
 
 def finde_alle_eintraege_nach_fiesta(tag: str, fiesta_name: str) -> list[tuple[str, int, dict]]:
     treffer = []
-    for zeit in aktive_zeiten(tag):
-        for index, eintrag in enumerate(ini_listen[tag][zeit]):
+    for zeit, _anzeige in alle_slots(tag):
+        for index, eintrag in enumerate(ini_listen.get(tag, {}).get(zeit, [])):
             if eintrag["fiesta"].lower() == fiesta_name.lower():
                 treffer.append((zeit, index, eintrag))
     return treffer
@@ -463,16 +583,16 @@ def finde_alle_eintraege_nach_fiesta(tag: str, fiesta_name: str) -> list[tuple[s
 def alte_liste_als_text(tag: str) -> str:
     teile = []
 
-    zeiten = aktive_zeiten(tag)
+    slots = alle_slots(tag)
 
-    if not zeiten:
+    if not slots:
         embed.add_field(
-            name="⛔ Keine Uhrzeiten festgelegt",
-            value="Ein Admin muss zuerst eine Uhrzeit hinzufügen.",
+            name="⛔ Keine Termine festgelegt",
+            value="Ein Admin muss zuerst eine Uhrzeit oder einen Ini-Termin hinzufügen.",
             inline=False,
         )
 
-    for zeit in zeiten:
+    for zeit, sichtbarer_name in slots:
         daten = ini_listen.get(tag, {}).get(zeit, [])
 
         if daten:
@@ -483,7 +603,7 @@ def alte_liste_als_text(tag: str) -> str:
         else:
             namen = "Keine Einträge"
 
-        teile.append(f"**{zeit}**\n{namen}")
+        teile.append(f"**{slot_anzeige(tag, zeit)}**\n{namen}")
 
     return "\n\n".join(teile)
 
@@ -520,10 +640,10 @@ def ini_embed(tag: str) -> discord.Embed:
                 f"`{i:02d}.` {klassen_emoji(eintrag['fiesta'])} **{eintrag['fiesta']}**"
                 for i, eintrag in enumerate(daten, start=1)
             )
-            field_name = f"🟢 {zeit}  •  {anzahl} angemeldet"
+            field_name = f"🟢 {sichtbarer_name}  •  {anzahl} angemeldet"
             field_value = f"{teilnehmer}"
         else:
-            field_name = f"🕒 {zeit}  •  0 angemeldet"
+            field_name = f"🕒 {sichtbarer_name}  •  0 angemeldet"
             field_value = "*Noch niemand angemeldet.*"
 
         embed.add_field(
@@ -619,7 +739,7 @@ async def update_ini_message(tag: str) -> None:
 
 class AnmeldungModal(discord.ui.Modal):
     def __init__(self, tag: str, zeit: str):
-        super().__init__(title=f"Anmeldung {tag} | {zeit}")
+        super().__init__(title=f"Anmeldung {tag}")
         self.tag = tag
         self.zeit = zeit
 
@@ -662,7 +782,7 @@ class AnmeldungModal(discord.ui.Modal):
         await interaction.response.defer(ephemeral=True, thinking=False)
         await update_ini_message(self.tag)
         await interaction.followup.send(
-            f"**{fiesta_name}** wurde für **{self.tag}** um **{self.zeit}** angemeldet.",
+            f"**{fiesta_name}** wurde für **{self.tag}** bei **{slot_anzeige(self.tag, self.zeit)}** angemeldet.",
             ephemeral=True,
         )
 
@@ -670,7 +790,7 @@ class AnmeldungModal(discord.ui.Modal):
             await log_senden(
                 interaction.guild,
                 f"✅ Anmeldung - Ini {self.tag}",
-                f"**Eingetragen von:** {member.mention}\n**Fiesta:** {fiesta_name}\n**Uhrzeit:** {self.zeit}",
+                f"**Eingetragen von:** {member.mention}\n**Fiesta:** {fiesta_name}\n**Termin:** {slot_anzeige(self.tag, self.zeit)}",
                 discord.Color.green(),
             )
 
@@ -786,6 +906,66 @@ class AendernModal(discord.ui.Modal):
             )
 
 
+class IniTerminHinzufuegenModal(discord.ui.Modal):
+    def __init__(self, tag: str):
+        super().__init__(title=f"Ini-Termin hinzufügen - {tag}")
+        self.tag = tag
+
+        self.uhrzeit = discord.ui.TextInput(
+            label="Uhrzeit",
+            placeholder="Frei, z. B. 19:30 oder ab 20 Uhr",
+            min_length=1,
+            max_length=4000,
+            required=True,
+        )
+        self.ini_name = discord.ui.TextInput(
+            label="Ini-Name",
+            placeholder="Frei, z. B. Karen, Wald oder Kalzar",
+            style=discord.TextStyle.paragraph,
+            min_length=1,
+            max_length=4000,
+            required=True,
+        )
+        self.add_item(self.uhrzeit)
+        self.add_item(self.ini_name)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message(
+                "Du hast dafür keine Rechte.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        if len(termine_fuer_tag(self.tag)) >= MAX_TERMINE_PRO_TAG:
+            await interaction.response.send_message(
+                f"Pro Tag sind maximal **{MAX_TERMINE_PRO_TAG}** zusätzliche Termine möglich.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        termin = {
+            "id": uuid.uuid4().hex,
+            "uhrzeit": str(self.uhrzeit.value),
+            "name": str(self.ini_name.value),
+            "created_by": interaction.user.id,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
+        ini_termine.setdefault(self.tag, []).append(termin)
+        ini_listen.setdefault(self.tag, {})[termin_key(termin["id"])] = []
+        speichere_daten()
+
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        await update_ini_message(self.tag)
+        await interaction.followup.send(
+            f"Der Termin **{termin_anzeige(termin)}** wurde für **{self.tag}** angelegt.",
+            ephemeral=True,
+        )
+
+
 class UhrzeitHinzufuegenModal(discord.ui.Modal):
     def __init__(self, tag: str):
         super().__init__(title=f"Uhrzeit hinzufügen - {tag}")
@@ -838,13 +1018,6 @@ class UhrzeitHinzufuegenModal(discord.ui.Modal):
             )
             return
 
-        if zeitfenster_hat_ueberschneidung(self.tag, zeitfenster):
-            await interaction.response.send_message(
-                "Dieses Zeitfenster überschneidet sich mit einer bereits vorhandenen Uhrzeit.",
-                ephemeral=True,
-                delete_after=10,
-            )
-            return
 
         zeiten_pro_tag.setdefault(self.tag, []).append(zeitfenster)
         sortiere_zeiten(self.tag)
@@ -919,17 +1092,6 @@ class UhrzeitBearbeitenModal(discord.ui.Modal):
             )
             return
 
-        if zeitfenster_hat_ueberschneidung(
-            self.tag,
-            neues_zeitfenster,
-            ignorieren=self.alte_zeit,
-        ):
-            await interaction.response.send_message(
-                "Das neue Zeitfenster überschneidet sich mit einer anderen Uhrzeit.",
-                ephemeral=True,
-                delete_after=10,
-            )
-            return
 
         index = zeiten_pro_tag[self.tag].index(self.alte_zeit)
         zeiten_pro_tag[self.tag][index] = neues_zeitfenster
@@ -1018,12 +1180,109 @@ class AbmeldenZeitView(discord.ui.View):
         self.add_item(AbmeldenZeitSelect(tag, fiesta_name, treffer))
 
 
+class AbmeldenEintragSelect(discord.ui.Select):
+    def __init__(self, tag: str, eintraege: list[tuple[str, int, dict]]):
+        self.tag = tag
+        self.mapping: dict[str, tuple[str, str, int]] = {}
+        optionen = []
+
+        for nummer, (slot_key, index, eintrag) in enumerate(eintraege[:25]):
+            value = f"remove:{nummer}"
+            fiesta = str(eintrag.get("fiesta", "Unbekannt"))
+            optionen.append(
+                discord.SelectOption(
+                    label=select_label(f"{fiesta} | {slot_anzeige(tag, slot_key)}"),
+                    value=value,
+                    emoji="👤",
+                )
+            )
+            self.mapping[value] = (slot_key, fiesta, index)
+
+        super().__init__(
+            placeholder="Eintrag zum Abmelden auswählen",
+            min_values=1,
+            max_values=1,
+            options=optionen,
+            custom_id=f"ini_abmelden_eintrag_{tag}",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "Fehler: Mitglied nicht erkannt.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        if not hat_ini_rolle(interaction.user):
+            await interaction.response.send_message(
+                "Du hast dafür keine Rechte.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        slot_key, fiesta, gespeicherter_index = self.mapping[self.values[0]]
+        liste = ini_listen.get(self.tag, {}).get(slot_key, [])
+
+        index_gefunden = None
+        if (
+            0 <= gespeicherter_index < len(liste)
+            and str(liste[gespeicherter_index].get("fiesta", "")) == fiesta
+        ):
+            index_gefunden = gespeicherter_index
+        else:
+            for index, eintrag in enumerate(liste):
+                if str(eintrag.get("fiesta", "")) == fiesta:
+                    index_gefunden = index
+                    break
+
+        if index_gefunden is None:
+            await interaction.response.send_message(
+                "Der ausgewählte Eintrag wurde bereits entfernt oder nicht gefunden.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        del liste[index_gefunden]
+        speichere_daten()
+
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        await update_ini_message(self.tag)
+        await interaction.followup.send(
+            f"**{fiesta}** wurde aus **{slot_anzeige(self.tag, slot_key)}** abgemeldet.",
+            ephemeral=True,
+        )
+
+        if interaction.guild:
+            await log_senden(
+                interaction.guild,
+                f"❌ Abmeldung - Ini {self.tag}",
+                f"**Abgemeldet von:** {interaction.user.mention}\n"
+                f"**Fiesta:** {fiesta}\n"
+                f"**Termin:** {slot_anzeige(self.tag, slot_key)}",
+                discord.Color.red(),
+            )
+
+
+class AbmeldenEintragView(discord.ui.View):
+    def __init__(self, tag: str, eintraege: list[tuple[str, int, dict]]):
+        super().__init__(timeout=60)
+        self.add_item(AbmeldenEintragSelect(tag, eintraege))
+
+
 class IniZeitSelect(discord.ui.Select):
     def __init__(self, tag: str):
         self.tag = tag
         optionen = [
-            discord.SelectOption(label=zeit, value=zeit, emoji="🕒")
-            for zeit in aktive_zeiten(tag)
+            discord.SelectOption(
+                label=select_label(sichtbarer_name),
+                value=slot_key,
+                emoji="🕒",
+            )
+            for slot_key, sichtbarer_name in alle_slots(tag)
         ]
 
         if not optionen:
@@ -1041,7 +1300,7 @@ class IniZeitSelect(discord.ui.Select):
             max_values=1,
             options=optionen,
             custom_id=f"ini_anmelden_zeit_{tag}",
-            disabled=not aktive_zeiten(tag),
+            disabled=not alle_slots(tag),
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -1054,7 +1313,7 @@ class IniZeitSelect(discord.ui.Select):
             return
 
         zeit = self.values[0]
-        if zeit not in aktive_zeiten(self.tag):
+        if zeit not in {slot_key for slot_key, _anzeige in alle_slots(self.tag)}:
             await interaction.response.send_message(
                 "Diese Uhrzeit ist für diesen Tag nicht mehr aktiv.",
                 ephemeral=True,
@@ -1112,7 +1371,24 @@ class IniView(discord.ui.View):
             await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
             return
 
-        await interaction.response.send_modal(AbmeldenNameModal(self.tag))
+        eintraege: list[tuple[str, int, dict]] = []
+        for slot_key, _anzeige in alle_slots(self.tag):
+            for index, eintrag in enumerate(ini_listen.get(self.tag, {}).get(slot_key, [])):
+                eintraege.append((slot_key, index, eintrag))
+
+        if not eintraege:
+            await interaction.response.send_message(
+                "Für diesen Tag gibt es keine Einträge zum Abmelden.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        await interaction.response.send_message(
+            "Wähle den Eintrag aus, der abgemeldet werden soll:",
+            view=AbmeldenEintragView(self.tag, eintraege),
+            ephemeral=True,
+        )
 
     async def aendern_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(AendernModal(self.tag))
@@ -1125,7 +1401,7 @@ class IniView(discord.ui.View):
         anzahl = gesamt_teilnehmer(self.tag)
         reset_liste = alte_liste_als_text(self.tag)
 
-        for zeit in aktive_zeiten(self.tag):
+        for zeit, _anzeige in alle_slots(self.tag):
             ini_listen[self.tag][zeit].clear()
         speichere_daten()
 
@@ -2402,7 +2678,7 @@ class IniCommands(app_commands.Group):
         anzahl = gesamt_teilnehmer(tag_name)
         reset_liste = alte_liste_als_text(tag_name)
 
-        for zeit in aktive_zeiten(tag_name):
+        for zeit, _anzeige in alle_slots(tag_name):
             ini_listen[tag_name][zeit].clear()
         speichere_daten()
 
@@ -2423,6 +2699,80 @@ class IniCommands(app_commands.Group):
                 ),
                 discord.Color.dark_blue(),
             )
+
+    @app_commands.command(
+        name="termin_hinzufuegen",
+        description="Admin: Legt einen frei benannten Ini-Termin für einen Tag an",
+    )
+    @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
+    async def termin_hinzufuegen(
+        self,
+        interaction: discord.Interaction,
+        tag: app_commands.Choice[str],
+    ) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message(
+                "Du hast dafür keine Rechte.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        await interaction.response.send_modal(
+            IniTerminHinzufuegenModal(tag.value)
+        )
+
+    @app_commands.command(
+        name="termin_loeschen",
+        description="Admin: Löscht einen zusätzlichen Ini-Termin ohne Anmeldungen",
+    )
+    @app_commands.choices(tag=[app_commands.Choice(name=t, value=t) for t in TAGE])
+    @app_commands.autocomplete(termin_id=termin_autocomplete)
+    async def termin_loeschen(
+        self,
+        interaction: discord.Interaction,
+        tag: app_commands.Choice[str],
+        termin_id: str,
+    ) -> None:
+        if not isinstance(interaction.user, discord.Member) or not ist_admin(interaction.user):
+            await interaction.response.send_message(
+                "Du hast dafür keine Rechte.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        termin = finde_termin(tag.value, termin_id)
+        if termin is None:
+            await interaction.response.send_message(
+                "Dieser Termin wurde nicht gefunden.",
+                ephemeral=True,
+                delete_after=8,
+            )
+            return
+
+        key = termin_key(str(termin["id"]))
+        if ini_listen.get(tag.value, {}).get(key):
+            await interaction.response.send_message(
+                "Dieser Termin kann nicht gelöscht werden, solange dort Anmeldungen vorhanden sind.",
+                ephemeral=True,
+                delete_after=10,
+            )
+            return
+
+        ini_termine[tag.value] = [
+            eintrag for eintrag in termine_fuer_tag(tag.value)
+            if str(eintrag.get("id")) != str(termin_id)
+        ]
+        ini_listen.get(tag.value, {}).pop(key, None)
+        speichere_daten()
+
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        await update_ini_message(tag.value)
+        await interaction.followup.send(
+            f"**{termin_anzeige(termin)}** wurde gelöscht.",
+            ephemeral=True,
+        )
 
     @app_commands.command(
         name="uhrzeit_hinzufuegen",

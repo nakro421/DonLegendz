@@ -1,33 +1,54 @@
-# Fiesta Online Discord Bot – Stand vor Statistik
+# Fiesta Online Discord Bot
 
-Diese Version enthält:
+Diese Version basiert direkt auf dem aktuell hochgeladenen Bot.
 
-- Ini-System
-- frei wählbare Start- und Endzeiten mit Minuten pro Wochentag
-- überschneidende Zeitfenster sind erlaubt
-- Anmeldung, Abmeldung, Namensänderung und Reset
+## Neu
+
+### Zusätzliche freie Ini-Termine
+
+Admin-Befehl:
+
+`/ini termin_hinzufuegen`
+
+Der Admin wählt den Wochentag und trägt Uhrzeit sowie Ini-Namen frei ein.
+
+Beispiele:
+
+- `19:30 — Karen`
+- `ab 20 Uhr — Wald Gruppe 2`
+- `21:15 — Kalzar / Stammgruppe`
+
+Löschen:
+
+`/ini termin_loeschen`
+
+Ein Termin kann nur gelöscht werden, wenn dort keine Anmeldungen vorhanden sind.
+
+### Abmelden repariert
+
+Beim Abmelden wird der vorhandene Eintrag direkt aus einem Dropdown gewählt. Eine exakte erneute Eingabe des Namens ist nicht mehr nötig.
+
+Damit funktionieren auch Einträge wie:
+
+`Zaubi - Ryu und noch etwas`
+
+## Unverändert enthalten
+
+- bestehendes Ini-System
+- freie Zeitfenster pro Wochentag
 - Bewerbungssystem
-- privates Support-/Frage-System
-- dauerhafte Speicherung über `/app/data/fiesta_data.json`
+- privates Support-System
+- Logs
+- Railway-Volume-Speicherung
 
-Nicht enthalten:
+## Railway
 
-- Monatsstatistik
-- persönliche Statistiken
-- Auszeichnungen
-- Ini-Start-/Ende-Statistik
-- Import alter Run-Zahlen
-
-## Railway Variables
+Variablen:
 
 - `DISCORD_TOKEN`
 - `SUPPORT_PANEL_CHANNEL_ID`
 - `SUPPORT_CATEGORY_ID`
 
-## Railway Volume
-
-Mount Path:
+Volume Mount Path:
 
 `/app/data`
-
-Hinweis: Bereits vorhandene Statistik-Felder in einer alten `fiesta_data.json` werden von dieser Version ignoriert.
