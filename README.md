@@ -52,3 +52,26 @@ Variablen:
 Volume Mount Path:
 
 `/app/data`
+
+
+## Termin-Anzeige korrigiert
+
+Ein über `/ini termin_hinzufuegen` erstellter Termin wird nun sofort in der Tages-Embed und im Anmelde-Dropdown angezeigt.
+
+Beispiel:
+
+- Uhrzeit: `20:00 - 22:00`
+- Ini-Name: `Wald`
+
+Anzeige:
+
+`20:00 - 22:00 — Wald`
+
+
+## Abmelden-Dropdown direkt sichtbar
+
+Unter der Ini-Uhrzeit-Auswahl befindet sich jetzt dauerhaft ein zweites Dropdown:
+
+`Eintrag zum Abmelden auswählen`
+
+Der frühere Abmelden-Button wurde entfernt. Nach jeder Anmeldung oder Abmeldung wird die Ini-Nachricht aktualisiert und das Dropdown neu aufgebaut.

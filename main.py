@@ -586,11 +586,7 @@ def alte_liste_als_text(tag: str) -> str:
     slots = alle_slots(tag)
 
     if not slots:
-        embed.add_field(
-            name="⛔ Keine Termine festgelegt",
-            value="Ein Admin muss zuerst eine Uhrzeit oder einen Ini-Termin hinzufügen.",
-            inline=False,
-        )
+        return "Keine Termine oder Einträge vorhanden."
 
     for zeit, sichtbarer_name in slots:
         daten = ini_listen.get(tag, {}).get(zeit, [])
@@ -622,16 +618,18 @@ def ini_embed(tag: str) -> discord.Embed:
         timestamp=datetime.now(),
     )
 
-    zeiten = aktive_zeiten(tag)
+    slots = alle_slots(tag)
 
-    if not zeiten:
+    if not slots:
         embed.add_field(
-            name="⛔ Keine Uhrzeiten festgelegt",
-            value="Ein Admin muss zuerst eine Uhrzeit hinzufügen.",
+            name="⛔ Keine Termine festgelegt",
+            value="Ein Admin muss zuerst eine Uhrzeit oder einen Ini-Termin hinzufügen.",
             inline=False,
         )
 
-    for zeit in zeiten:
+    # Discord erlaubt höchstens 25 Felder pro Embed.
+    # Das letzte Feld wird unten für die Zusammenfassung benötigt.
+    for zeit, sichtbarer_name in slots[:24]:
         daten = ini_listen.get(tag, {}).get(zeit, [])
         anzahl = len(daten)
 
@@ -641,14 +639,23 @@ def ini_embed(tag: str) -> discord.Embed:
                 for i, eintrag in enumerate(daten, start=1)
             )
             field_name = f"🟢 {sichtbarer_name}  •  {anzahl} angemeldet"
-            field_value = f"{teilnehmer}"
+            field_value = teilnehmer
         else:
             field_name = f"🕒 {sichtbarer_name}  •  0 angemeldet"
             field_value = "*Noch niemand angemeldet.*"
 
+        # Discord begrenzt Feldnamen und Feldinhalte.
         embed.add_field(
-            name=field_name,
-            value=field_value,
+            name=field_name[:256],
+            value=field_value[:1024],
+            inline=False,
+        )
+
+    if len(slots) > 24:
+        embed.add_field(
+            name="⚠️ Weitere Termine",
+            value=f"Es gibt **{len(slots) - 24}** weitere Termine. "
+                  "Discord kann in einer Embed maximal 25 Felder anzeigen.",
             inline=False,
         )
 
@@ -1181,22 +1188,47 @@ class AbmeldenZeitView(discord.ui.View):
 
 
 class AbmeldenEintragSelect(discord.ui.Select):
-    def __init__(self, tag: str, eintraege: list[tuple[str, int, dict]]):
+    def __init__(
+        self,
+        tag: str,
+        eintraege: list[tuple[str, int, dict]] | None = None,
+    ):
         self.tag = tag
         self.mapping: dict[str, tuple[str, str, int]] = {}
-        optionen = []
+
+        if eintraege is None:
+            eintraege = []
+            for slot_key, _anzeige in alle_slots(tag):
+                for index, eintrag in enumerate(
+                    ini_listen.get(tag, {}).get(slot_key, [])
+                ):
+                    eintraege.append((slot_key, index, eintrag))
+
+        optionen: list[discord.SelectOption] = []
 
         for nummer, (slot_key, index, eintrag) in enumerate(eintraege[:25]):
             value = f"remove:{nummer}"
             fiesta = str(eintrag.get("fiesta", "Unbekannt"))
             optionen.append(
                 discord.SelectOption(
-                    label=select_label(f"{fiesta} | {slot_anzeige(tag, slot_key)}"),
+                    label=select_label(
+                        f"{fiesta} | {slot_anzeige(tag, slot_key)}"
+                    ),
                     value=value,
                     emoji="👤",
                 )
             )
             self.mapping[value] = (slot_key, fiesta, index)
+
+        disabled = not optionen
+        if disabled:
+            optionen = [
+                discord.SelectOption(
+                    label="Keine Einträge zum Abmelden",
+                    value="__keine__",
+                    emoji="⛔",
+                )
+            ]
 
         super().__init__(
             placeholder="Eintrag zum Abmelden auswählen",
@@ -1204,6 +1236,8 @@ class AbmeldenEintragSelect(discord.ui.Select):
             max_values=1,
             options=optionen,
             custom_id=f"ini_abmelden_eintrag_{tag}",
+            disabled=disabled,
+            row=1,
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -1223,7 +1257,16 @@ class AbmeldenEintragSelect(discord.ui.Select):
             )
             return
 
-        slot_key, fiesta, gespeicherter_index = self.mapping[self.values[0]]
+        auswahl = self.values[0]
+        if auswahl not in self.mapping:
+            await interaction.response.send_message(
+                "Dieser Eintrag ist nicht mehr verfügbar.",
+                ephemeral=True,
+                delete_after=5,
+            )
+            return
+
+        slot_key, fiesta, gespeicherter_index = self.mapping[auswahl]
         liste = ini_listen.get(self.tag, {}).get(slot_key, [])
 
         index_gefunden = None
@@ -1267,11 +1310,6 @@ class AbmeldenEintragSelect(discord.ui.Select):
             )
 
 
-class AbmeldenEintragView(discord.ui.View):
-    def __init__(self, tag: str, eintraege: list[tuple[str, int, dict]]):
-        super().__init__(timeout=60)
-        self.add_item(AbmeldenEintragSelect(tag, eintraege))
-
 
 class IniZeitSelect(discord.ui.Select):
     def __init__(self, tag: str):
@@ -1301,6 +1339,7 @@ class IniZeitSelect(discord.ui.Select):
             options=optionen,
             custom_id=f"ini_anmelden_zeit_{tag}",
             disabled=not alle_slots(tag),
+            row=0,
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -1330,23 +1369,14 @@ class IniView(discord.ui.View):
         self.tag = tag
 
         self.add_item(IniZeitSelect(tag))
-
-        abmelden = discord.ui.Button(
-            label="Abmelden",
-            emoji="👤",
-            style=discord.ButtonStyle.danger,
-            custom_id=f"ini_abmelden_{tag}",
-            row=1,
-        )
-        abmelden.callback = self.abmelden_callback
-        self.add_item(abmelden)
+        self.add_item(AbmeldenEintragSelect(tag))
 
         aendern = discord.ui.Button(
             label="Namen ändern",
             emoji="✏️",
             style=discord.ButtonStyle.primary,
             custom_id=f"ini_aendern_{tag}",
-            row=1,
+            row=2,
         )
         aendern.callback = self.aendern_callback
         self.add_item(aendern)
@@ -1356,39 +1386,11 @@ class IniView(discord.ui.View):
             emoji="🔄",
             style=discord.ButtonStyle.secondary,
             custom_id=f"ini_reset_{tag}",
-            row=1,
+            row=2,
         )
         reset.callback = self.reset_callback
         self.add_item(reset)
 
-
-    async def abmelden_callback(self, interaction: discord.Interaction) -> None:
-        if not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message("Fehler: Mitglied nicht erkannt.", ephemeral=True, delete_after=5)
-            return
-
-        if not hat_ini_rolle(interaction.user):
-            await interaction.response.send_message("Du hast dafür keine Rechte.", ephemeral=True, delete_after=5)
-            return
-
-        eintraege: list[tuple[str, int, dict]] = []
-        for slot_key, _anzeige in alle_slots(self.tag):
-            for index, eintrag in enumerate(ini_listen.get(self.tag, {}).get(slot_key, [])):
-                eintraege.append((slot_key, index, eintrag))
-
-        if not eintraege:
-            await interaction.response.send_message(
-                "Für diesen Tag gibt es keine Einträge zum Abmelden.",
-                ephemeral=True,
-                delete_after=8,
-            )
-            return
-
-        await interaction.response.send_message(
-            "Wähle den Eintrag aus, der abgemeldet werden soll:",
-            view=AbmeldenEintragView(self.tag, eintraege),
-            ephemeral=True,
-        )
 
     async def aendern_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(AendernModal(self.tag))
